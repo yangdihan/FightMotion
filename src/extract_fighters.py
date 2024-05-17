@@ -4,11 +4,14 @@ import torch
 import torchvision
 import cv2
 
-DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load YOLOv5 model
-YOLO_MODEL = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True).eval().to(DEVICE)
+YOLO_MODEL = (
+    torch.hub.load("ultralytics/yolov5", "yolov5s", pretrained=True).eval().to(DEVICE)
+)
 YOLO_MODEL.classes = [0]  # Set model to detect only people (class 0)
+
 
 # Load Mask R-CNN model
 # mask_rcnn_model = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True).eval().cuda()
@@ -26,9 +29,10 @@ def extract_person_yolo(frame, yolo_model, threshold, min_area):
 
     return bboxes
 
+
 def bbox_dist(bbox1, bbox2):
     def euclidean_distance(p1, p2):
-        return np.sqrt((p1[0] - p2[0])**2 + (p1[1] - p2[1])**2)
+        return np.sqrt((p1[0] - p2[0]) ** 2 + (p1[1] - p2[1]) ** 2)
 
     def diagonal_length(bbox):
         _, _, w, h = bbox
@@ -37,13 +41,28 @@ def bbox_dist(bbox1, bbox2):
     x1, y1, w1, h1 = bbox1
     x2, y2, w2, h2 = bbox2
 
-    vertices1 = [(x1, y1), (x1 + w1, y1), (x1, y1 + h1), (x1 + w1, y1 + h1), (x1 + w1 / 2, y1 + h1 / 2)]
-    vertices2 = [(x2, y2), (x2 + w2, y2), (x2, y2 + h2), (x2 + w2, y2 + h2), (x2 + w2 / 2, y2 + h2 / 2)]
+    vertices1 = [
+        (x1, y1),
+        (x1 + w1, y1),
+        (x1, y1 + h1),
+        (x1 + w1, y1 + h1),
+        (x1 + w1 / 2, y1 + h1 / 2),
+    ]
+    vertices2 = [
+        (x2, y2),
+        (x2 + w2, y2),
+        (x2, y2 + h2),
+        (x2 + w2, y2 + h2),
+        (x2 + w2 / 2, y2 + h2 / 2),
+    ]
 
     avg_diagonal = (diagonal_length(bbox1) + diagonal_length(bbox2)) / 2
-    avg_distance = sum(euclidean_distance(v1, v2) for v1, v2 in zip(vertices1, vertices2)) / 5
+    avg_distance = (
+        sum(euclidean_distance(v1, v2) for v1, v2 in zip(vertices1, vertices2)) / 5
+    )
 
     return avg_distance / avg_diagonal
+
 
 class LinkedBbox:
     def __init__(self, bbox=None, frame=None):
@@ -67,12 +86,15 @@ def interpolate_bbox(start_bbox, end_bbox, steps):
         interpolated_bboxes.append(interpolated_bbox)
     return interpolated_bboxes
 
+
 def make_connections(detections, frame_count, bbox_dist_threshold):
     linked_bboxes = {}
 
     # Initialize linked list nodes for each detected bounding box
     for frame_idx, bboxes in detections:
-        linked_bboxes[frame_idx] = [LinkedBbox(bbox=bbox, frame=frame_idx) for bbox in bboxes]
+        linked_bboxes[frame_idx] = [
+            LinkedBbox(bbox=bbox, frame=frame_idx) for bbox in bboxes
+        ]
 
     # Connect bounding boxes in consecutive frames
     for i in range(frame_count - 1):
@@ -81,7 +103,7 @@ def make_connections(detections, frame_count, bbox_dist_threshold):
             next_bboxes = linked_bboxes[i + 1]
 
             for cb in current_bboxes:
-                min_dist = float('inf')
+                min_dist = float("inf")
                 best_match = None
                 for nb in next_bboxes:
                     if nb.prev is None:
@@ -112,7 +134,7 @@ def make_connections(detections, frame_count, bbox_dist_threshold):
 
                 for pb in prev_bboxes:
                     if pb.next is None:
-                        min_dist = float('inf')
+                        min_dist = float("inf")
                         best_match = None
                         for nb in next_bboxes:
                             if nb.prev is None:
@@ -123,13 +145,19 @@ def make_connections(detections, frame_count, bbox_dist_threshold):
 
                         if best_match:
                             steps = next_frame - prev_frame - 1
-                            interpolated = interpolate_bbox(pb.bbox, best_match.bbox, steps)
+                            interpolated = interpolate_bbox(
+                                pb.bbox, best_match.bbox, steps
+                            )
                             for idx, bbox in enumerate(interpolated):
-                                interpolated_node = LinkedBbox(bbox=bbox, frame=prev_frame + idx + 1)
+                                interpolated_node = LinkedBbox(
+                                    bbox=bbox, frame=prev_frame + idx + 1
+                                )
                                 interpolated_node.is_interpolated = True
                                 if prev_frame + idx + 1 not in linked_bboxes:
                                     linked_bboxes[prev_frame + idx + 1] = []
-                                linked_bboxes[prev_frame + idx + 1].append(interpolated_node)
+                                linked_bboxes[prev_frame + idx + 1].append(
+                                    interpolated_node
+                                )
                                 pb.next = interpolated_node
                                 interpolated_node.prev = pb
                                 pb = interpolated_node
@@ -138,7 +166,14 @@ def make_connections(detections, frame_count, bbox_dist_threshold):
 
     return linked_bboxes
 
-def main(input_video_path, output_video_path, yolo_threshold, min_area_ratio, bbox_dist_threshold):
+
+def main(
+    input_video_path,
+    output_video_path,
+    yolo_threshold,
+    min_area_ratio,
+    bbox_dist_threshold=50,
+):
     cap = cv2.VideoCapture(input_video_path)
     if not cap.isOpened():
         print("Error: Could not open video.")
@@ -167,7 +202,7 @@ def main(input_video_path, output_video_path, yolo_threshold, min_area_ratio, bb
     linked_bboxes = make_connections(detections, frame_count, bbox_dist_threshold)
 
     cap = cv2.VideoCapture(input_video_path)
-    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
 
     while cap.isOpened():
@@ -177,15 +212,14 @@ def main(input_video_path, output_video_path, yolo_threshold, min_area_ratio, bb
 
         frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
 
+        mask = np.zeros(frame.shape, dtype=np.uint8)
+
         if frame_idx in linked_bboxes:
             for linked_bbox in linked_bboxes[frame_idx]:
                 x, y, w, h = map(int, linked_bbox.bbox)
-                color = (0, 255, 0) if not linked_bbox.is_interpolated else (0, 0, 255)
-                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                label = 'Tracked' if not linked_bbox.is_interpolated else 'Interpolated'
-                cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, color, 2)
+                mask[y : y + h, x : x + w] = frame[y : y + h, x : x + w]
 
-        out.write(frame)
+        out.write(mask)
 
     cap.release()
     out.release()
@@ -194,6 +228,16 @@ def main(input_video_path, output_video_path, yolo_threshold, min_area_ratio, bb
 
 
 if __name__ == "__main__":
-    input_video_path = 'D:/Documents/devs/fight_motion/data/raw/aldo_holloway_single_angle.mp4'
-    output_video_path = 'D:/Documents/devs/fight_motion/data/interim/aldo_holloway_yolo_conn_test.mp4'
-    main(input_video_path, output_video_path, yolo_threshold=0.3, min_area_ratio=0.05, bbox_dist_threshold=0.1)
+    input_video_path = (
+        "D:/Documents/devs/fight_motion/data/raw/aldo_holloway_single_angle.mp4"
+    )
+    output_video_path = (
+        "D:/Documents/devs/fight_motion/data/interim/aldo_holloway_yolo_conn_test.mp4"
+    )
+    main(
+        input_video_path,
+        output_video_path,
+        yolo_threshold=0.3,
+        min_area_ratio=0.05,
+        bbox_dist_threshold=0.1,
+    )
