@@ -1,3 +1,6 @@
+import os
+import json
+import hashlib
 import numpy as np
 from scipy.interpolate import interp1d
 import torch
@@ -24,8 +27,12 @@ def extract_person_yolo(frame, yolo_model, threshold, min_area):
         if cls == 0 and conf >= threshold:
             x1, y1, x2, y2 = map(int, box)
             box_area = (x2 - x1) * (y2 - y1)
+            # if box_area >= min_area:
+            #     bboxes.append((x1, y1, x2 - x1, y2 - y1))
             if box_area >= min_area:
-                bboxes.append((x1, y1, x2 - x1, y2 - y1))
+                bbox = (x1, y1, x2 - x1, y2 - y1)
+                if bbox not in bboxes:  # Ensure no duplicates
+                    bboxes.append(bbox)
 
     return bboxes
 
@@ -64,6 +71,8 @@ def bbox_dist(bbox1, bbox2):
     return avg_distance / avg_diagonal
 
 
+
+
 class LinkedBbox:
     def __init__(self, bbox=None, frame=None):
         self.bbox = bbox
@@ -71,6 +80,11 @@ class LinkedBbox:
         self.next = None
         self.frame = frame
         self.is_interpolated = False
+        self.hash = self.compute_hash()
+
+    def compute_hash(self):
+        bbox_str = f"{self.bbox}-{self.frame}"
+        return hashlib.md5(bbox_str.encode()).hexdigest()
 
 
 def interpolate_bbox(start_bbox, end_bbox, steps):
@@ -86,94 +100,36 @@ def interpolate_bbox(start_bbox, end_bbox, steps):
         interpolated_bboxes.append(interpolated_bbox)
     return interpolated_bboxes
 
-
-def make_connections(detections, frame_count, bbox_dist_threshold):
+def direct_connection(detections, bbox_dist_threshold):
     linked_bboxes = {}
 
-    # Initialize linked list nodes for each detected bounding box
-    for frame_idx, bboxes in detections:
-        linked_bboxes[frame_idx] = [
-            LinkedBbox(bbox=bbox, frame=frame_idx) for bbox in bboxes
-        ]
+    for frame_idx, bboxes in detections.items():
+        linked_bboxes[frame_idx] = [LinkedBbox(bbox=bbox, frame=frame_idx) for bbox in bboxes]
 
-    # Connect bounding boxes in consecutive frames
-    for i in range(frame_count - 1):
-        if i in linked_bboxes and i + 1 in linked_bboxes:
-            current_bboxes = linked_bboxes[i]
-            next_bboxes = linked_bboxes[i + 1]
+    for frame_idx in range(len(detections) - 1):
+        current_bboxes = linked_bboxes[frame_idx]
+        next_bboxes = linked_bboxes[frame_idx + 1]
 
-            for cb in current_bboxes:
-                min_dist = float("inf")
-                best_match = None
-                for nb in next_bboxes:
-                    if nb.prev is None:
-                        dist = bbox_dist(cb.bbox, nb.bbox)
-                        if dist < min_dist and dist <= bbox_dist_threshold:
-                            min_dist = dist
-                            best_match = nb
+        for cb in current_bboxes:
+            min_dist = float('inf')
+            best_match = None
+            for nb in next_bboxes:
+                dist = bbox_dist(cb.bbox, nb.bbox)
+                if dist < min_dist and dist <= bbox_dist_threshold:
+                    min_dist = dist
+                    best_match = nb
 
-                if best_match:
-                    cb.next = best_match
-                    best_match.prev = cb
-
-    # Interpolate missing bounding boxes
-    for frame_idx in range(frame_count):
-        if frame_idx not in linked_bboxes:
-            prev_frame = frame_idx - 1
-            next_frame = frame_idx + 1
-
-            while prev_frame >= 0 and prev_frame not in linked_bboxes:
-                prev_frame -= 1
-
-            while next_frame < frame_count and next_frame not in linked_bboxes:
-                next_frame += 1
-
-            if prev_frame >= 0 and next_frame < frame_count:
-                prev_bboxes = [node for node in linked_bboxes[prev_frame]]
-                next_bboxes = [node for node in linked_bboxes[next_frame]]
-
-                for pb in prev_bboxes:
-                    if pb.next is None:
-                        min_dist = float("inf")
-                        best_match = None
-                        for nb in next_bboxes:
-                            if nb.prev is None:
-                                dist = bbox_dist(pb.bbox, nb.bbox)
-                                if dist < min_dist and dist <= bbox_dist_threshold:
-                                    min_dist = dist
-                                    best_match = nb
-
-                        if best_match:
-                            steps = next_frame - prev_frame - 1
-                            interpolated = interpolate_bbox(
-                                pb.bbox, best_match.bbox, steps
-                            )
-                            for idx, bbox in enumerate(interpolated):
-                                interpolated_node = LinkedBbox(
-                                    bbox=bbox, frame=prev_frame + idx + 1
-                                )
-                                interpolated_node.is_interpolated = True
-                                if prev_frame + idx + 1 not in linked_bboxes:
-                                    linked_bboxes[prev_frame + idx + 1] = []
-                                linked_bboxes[prev_frame + idx + 1].append(
-                                    interpolated_node
-                                )
-                                pb.next = interpolated_node
-                                interpolated_node.prev = pb
-                                pb = interpolated_node
-                            pb.next = best_match
-                            best_match.prev = pb
+            if best_match:
+                cb.next = best_match.hash
+                best_match.prev = cb.hash
 
     return linked_bboxes
 
 
-def main(
-    input_video_path,
-    output_video_path,
-    yolo_threshold,
-    min_area_ratio,
-    bbox_dist_threshold=50,
-):
+def main(input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_dist_threshold=0.5):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+
     cap = cv2.VideoCapture(input_video_path)
     if not cap.isOpened():
         print("Error: Could not open video.")
@@ -181,63 +137,65 @@ def main(
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    fps = cap.get(cv2.CAP_PROP_FPS)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     min_area = min_area_ratio * frame_width * frame_height
 
-    detections = []
+    detections = {}
 
     while cap.isOpened():
         ret, frame = cap.read()
         if not ret:
             break
 
-        frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
+        frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1  # Convert to 0-based indexing
         bboxes = extract_person_yolo(frame, YOLO_MODEL, yolo_threshold, min_area)
-        detections.append((frame_idx, bboxes))
+        detections[frame_idx] = bboxes
 
     cap.release()
 
-    linked_bboxes = make_connections(detections, frame_count, bbox_dist_threshold)
+    linked_bboxes = direct_connection(detections, bbox_dist_threshold)
 
-    cap = cv2.VideoCapture(input_video_path)
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-    out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
-
-    while cap.isOpened():
+    cap = cv2.VideoCapture(input_video_path)  # Reopen the video to read frames again
+    for frame_idx in range(frame_count):
+        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx + 1)  # Convert back to 1-based indexing
         ret, frame = cap.read()
         if not ret:
             break
-
-        frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
-
-        mask = np.zeros(frame.shape, dtype=np.uint8)
 
         if frame_idx in linked_bboxes:
-            for linked_bbox in linked_bboxes[frame_idx]:
-                x, y, w, h = map(int, linked_bbox.bbox)
-                mask[y : y + h, x : x + w] = frame[y : y + h, x : x + w]
+            for node in linked_bboxes[frame_idx]:
+                x, y, w, h = map(int, node.bbox)
+                color = (0, 255, 0)  # Green for YOLO-detected bounding boxes
+                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
+                label = f"ID: {node.hash[:6]}"  # Display first 6 characters of the hash
+                cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
 
-        out.write(mask)
+        frame_output_path = os.path.join(output_folder, f"{frame_idx}.jpg")
+        cv2.imwrite(frame_output_path, frame)
 
     cap.release()
-    out.release()
     cv2.destroyAllWindows()
-    print("Processing complete, output saved to", output_video_path)
+
+    linked_bboxes_json = {frame: [node.__dict__ for node in nodes] for frame, nodes in linked_bboxes.items()}
+
+    with open(os.path.join(output_folder, "linked_bboxes.json"), "w") as f:
+        json.dump(linked_bboxes_json, f, indent=4)
+
+    print("Processing complete, frames saved to", output_folder)
 
 
 if __name__ == "__main__":
     input_video_path = (
         "D:/Documents/devs/fight_motion/data/raw/aldo_holloway_single_angle.mp4"
     )
-    output_video_path = (
-        "D:/Documents/devs/fight_motion/data/interim/aldo_holloway_yolo_conn_test.mp4"
+    output_folder = (
+        "D:/Documents/devs/fight_motion/data/interim/"
     )
     main(
         input_video_path,
-        output_video_path,
-        yolo_threshold=0.3,
+        output_folder,
+        yolo_threshold=0.382,
         min_area_ratio=0.05,
         bbox_dist_threshold=0.1,
     )
