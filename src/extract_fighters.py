@@ -66,54 +66,52 @@ def bbox_dist(bbox1, bbox2):
     centroid2 = (x2 + w2 / 2, y2 + h2 / 2)
 
     avg_diagonal = (diagonal_length(bbox1) + diagonal_length(bbox2)) / 2
-    avg_distance = ((
-        sum(euclidean_distance(v1, v2) for v1, v2 in zip(vertices1, vertices2)) / 4
-    ) + (euclidean_distance(centroid1, centroid2)))/2
+    avg_distance = (
+        (sum(euclidean_distance(v1, v2) for v1, v2 in zip(vertices1, vertices2)) / 4)
+        + (euclidean_distance(centroid1, centroid2))
+    ) / 2
 
     return avg_distance / avg_diagonal
 
 
-
-
 class LinkedBbox:
-    def __init__(self, bbox=None, frame=None):
+    def __init__(self, bbox=None, frame=None, is_interpolated=False):
         self.bbox = bbox
         self.prev = None
         self.next = None
         self.frame = frame
-        self.is_interpolated = False
+        self.is_interpolated = is_interpolated
         self.hash = self.compute_hash()
 
     def compute_hash(self):
         bbox_str = f"{self.bbox}-{self.frame}"
         return hashlib.md5(bbox_str.encode()).hexdigest()
 
+    def to_dict(self):
+        return {
+            "bbox": self.bbox,
+            "frame": self.frame,
+            "is_interpolated": self.is_interpolated,
+            "hash": self.hash,
+            "prev": self.prev.hash if self.prev else None,
+            "next": self.next.hash if self.next else None,
+        }
 
-def interpolate_bbox(start_bbox, end_bbox, steps):
-    interpolated_bboxes = []
-    for i in range(1, steps + 1):
-        ratio = i / (steps + 1)
-        interpolated_bbox = (
-            start_bbox[0] * (1 - ratio) + end_bbox[0] * ratio,
-            start_bbox[1] * (1 - ratio) + end_bbox[1] * ratio,
-            start_bbox[2] * (1 - ratio) + end_bbox[2] * ratio,
-            start_bbox[3] * (1 - ratio) + end_bbox[3] * ratio,
-        )
-        interpolated_bboxes.append(interpolated_bbox)
-    return interpolated_bboxes
 
 def direct_connection(detections, bbox_dist_threshold):
     linked_bboxes = {}
 
     for frame_idx, bboxes in detections.items():
-        linked_bboxes[frame_idx] = [LinkedBbox(bbox=bbox, frame=frame_idx) for bbox in bboxes]
+        linked_bboxes[frame_idx] = [
+            LinkedBbox(bbox=bbox, frame=frame_idx) for bbox in bboxes
+        ]
 
     for frame_idx in range(len(detections) - 1):
         current_bboxes = linked_bboxes[frame_idx]
         next_bboxes = linked_bboxes[frame_idx + 1]
 
         for cb in current_bboxes:
-            min_dist = float('inf')
+            min_dist = float("inf")
             best_match = None
             for nb in next_bboxes:
                 dist = bbox_dist(cb.bbox, nb.bbox)
@@ -122,10 +120,11 @@ def direct_connection(detections, bbox_dist_threshold):
                     best_match = nb
 
             if best_match:
-                cb.next = best_match.hash
-                best_match.prev = cb.hash
+                cb.next = best_match
+                best_match.prev = cb
 
     return linked_bboxes
+
 
 def infer_connection(linked_bboxes, bbox_dist_threshold):
     # Forward iteration: find the next linked bbox for bboxes without next
@@ -137,11 +136,15 @@ def infer_connection(linked_bboxes, bbox_dist_threshold):
                     future_bboxes = linked_bboxes[future_frame_idx]
                     for fb in future_bboxes:
                         if fb.prev is None:
-                            dist_threshold = (future_frame_idx - frame_idx) * bbox_dist_threshold
+                            dist_threshold = (
+                                future_frame_idx - frame_idx
+                            ) * bbox_dist_threshold
                             if bbox_dist(cb.bbox, fb.bbox) <= dist_threshold:
-                                print(f"{frame_idx}:{cb.hash}->{future_frame_idx}:{fb.hash}={bbox_dist(cb.bbox, fb.bbox)}<{dist_threshold}")
-                                cb.next = fb.hash
-                                fb.prev = cb.hash
+                                print(
+                                    f"{frame_idx}:{cb.hash}->{future_frame_idx}:{fb.hash}={bbox_dist(cb.bbox, fb.bbox)}<{dist_threshold}"
+                                )
+                                cb.next = fb
+                                fb.prev = cb
                                 break
                     if cb.next is not None:
                         break
@@ -155,23 +158,74 @@ def infer_connection(linked_bboxes, bbox_dist_threshold):
                     past_bboxes = linked_bboxes[past_frame_idx]
                     for pb in past_bboxes:
                         if pb.next is None:
-                            dist_threshold = (frame_idx - past_frame_idx) * bbox_dist_threshold
+                            dist_threshold = (
+                                frame_idx - past_frame_idx
+                            ) * bbox_dist_threshold
                             if bbox_dist(cb.bbox, pb.bbox) <= dist_threshold:
-                                print(f"{frame_idx}:{cb.hash}->{past_frame_idx}:{pb.hash}={bbox_dist(cb.bbox, pb.bbox)}<{dist_threshold}")
-                                cb.prev = pb.hash
-                                pb.next = cb.hash
+                                print(
+                                    f"{frame_idx}:{cb.hash}->{past_frame_idx}:{pb.hash}={bbox_dist(cb.bbox, pb.bbox)}<{dist_threshold}"
+                                )
+                                cb.prev = pb
+                                pb.next = cb
                                 break
                     if cb.prev is not None:
                         break
 
     return linked_bboxes
 
-# next, let's do the frame interpolateion.
-# 1. `interpolate_bbox` method. it should take in 2 `LinkedBbox`, if they are not consecutive frames, then interpolate the bbox (i.e. interpolate the coordinates of the 4 vertices) from the start to end frame, and instantiate `LinkedBbox` objects at corresponding frames. 
-# 2. a wrapper method that iterate through the frames and call `interpolate_bbox` if necessary
-# 3. modified `cv2.rectangle` in `main()` such that plots green bbox for detected, and red bbox for interpolated
 
-def main(input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_dist_threshold):
+def interpolate_bbox(start_bbox, end_bbox):
+    interpolated_bboxes = []
+    start_frame = start_bbox.frame
+    end_frame = end_bbox.frame
+
+    steps = end_frame - start_frame - 1
+    if steps <= 0:
+        return interpolated_bboxes
+
+    for i in range(1, steps + 1):
+        ratio = i / (steps + 1)
+        interpolated_bbox = (
+            start_bbox.bbox[0] * (1 - ratio) + end_bbox.bbox[0] * ratio,
+            start_bbox.bbox[1] * (1 - ratio) + end_bbox.bbox[1] * ratio,
+            start_bbox.bbox[2] * (1 - ratio) + end_bbox.bbox[2] * ratio,
+            start_bbox.bbox[3] * (1 - ratio) + end_bbox.bbox[3] * ratio,
+        )
+        interpolated_bboxes.append(
+            LinkedBbox(
+                bbox=interpolated_bbox, frame=start_frame + i, is_interpolated=True
+            )
+        )
+
+    return interpolated_bboxes
+
+
+def interpolate_missing_bboxes(linked_bboxes):
+    all_bboxes = []
+    for frame_idx in sorted(linked_bboxes.keys()):
+        all_bboxes.extend(linked_bboxes[frame_idx])
+
+    for bbox in all_bboxes:
+        if bbox.next and bbox.next.frame != bbox.frame + 1:
+            interpolated_bboxes = interpolate_bbox(bbox, bbox.next)
+            for ib in interpolated_bboxes:
+                if ib.frame not in linked_bboxes:
+                    linked_bboxes[ib.frame] = []
+                linked_bboxes[ib.frame].append(ib)
+
+        if bbox.prev and bbox.prev.frame != bbox.frame - 1:
+            interpolated_bboxes = interpolate_bbox(bbox.prev, bbox)
+            for ib in interpolated_bboxes:
+                if ib.frame not in linked_bboxes:
+                    linked_bboxes[ib.frame] = []
+                linked_bboxes[ib.frame].append(ib)
+
+    return linked_bboxes
+
+
+def main(
+    input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_dist_threshold
+):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
@@ -193,7 +247,9 @@ def main(input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_d
         if not ret:
             break
 
-        frame_idx = int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1  # Convert to 0-based indexing
+        frame_idx = (
+            int(cap.get(cv2.CAP_PROP_POS_FRAMES)) - 1
+        )  # Convert to 0-based indexing
         bboxes = extract_person_yolo(frame, YOLO_MODEL, yolo_threshold, min_area)
         detections[frame_idx] = bboxes
 
@@ -201,10 +257,13 @@ def main(input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_d
 
     linked_bboxes = direct_connection(detections, bbox_dist_threshold)
     linked_bboxes = infer_connection(linked_bboxes, bbox_dist_threshold)
+    linked_bboxes = interpolate_missing_bboxes(linked_bboxes)
 
     cap = cv2.VideoCapture(input_video_path)  # Reopen the video to read frames again
     for frame_idx in range(frame_count):
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx + 1)  # Convert back to 1-based indexing
+        cap.set(
+            cv2.CAP_PROP_POS_FRAMES, frame_idx + 1
+        )  # Convert back to 1-based indexing
         ret, frame = cap.read()
         if not ret:
             break
@@ -212,10 +271,14 @@ def main(input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_d
         if frame_idx in linked_bboxes:
             for node in linked_bboxes[frame_idx]:
                 x, y, w, h = map(int, node.bbox)
-                color = (0, 255, 0)  # Green for YOLO-detected bounding boxes
+                color = (
+                    (0, 255, 0) if not node.is_interpolated else (0, 0, 255)
+                )  # Green for YOLO-detected, Red for interpolated
                 cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
                 label = f"ID: {node.hash[:6]}"  # Display first 6 characters of the hash
-                cv2.putText(frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                cv2.putText(
+                    frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
+                )
 
         frame_output_path = os.path.join(output_folder, f"{frame_idx}.jpg")
         cv2.imwrite(frame_output_path, frame)
@@ -223,7 +286,10 @@ def main(input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_d
     cap.release()
     cv2.destroyAllWindows()
 
-    linked_bboxes_json = {frame: [node.__dict__ for node in nodes] for frame, nodes in linked_bboxes.items()}
+    linked_bboxes_json = {
+        frame: [node.to_dict() for node in nodes]
+        for frame, nodes in linked_bboxes.items()
+    }
 
     with open(os.path.join(output_folder, "linked_bboxes.json"), "w") as f:
         json.dump(linked_bboxes_json, f, indent=4)
@@ -235,9 +301,7 @@ if __name__ == "__main__":
     input_video_path = (
         "D:/Documents/devs/fight_motion/data/raw/aldo_holloway_single_angle.mp4"
     )
-    output_folder = (
-        "D:/Documents/devs/fight_motion/data/interim/"
-    )
+    output_folder = "D:/Documents/devs/fight_motion/data/interim/"
     main(
         input_video_path,
         output_folder,
