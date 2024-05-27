@@ -125,6 +125,44 @@ def direct_connection(detections, bbox_dist_threshold):
 
     return linked_bboxes
 
+def infer_connection(linked_bboxes, bbox_dist_threshold):
+    # Forward iteration: find the next linked bbox for bboxes without next
+    for frame_idx in range(len(linked_bboxes) - 1):
+        current_bboxes = linked_bboxes[frame_idx]
+        for cb in current_bboxes:
+            if cb.next is None:
+                for future_frame_idx in range(frame_idx + 1, len(linked_bboxes)):
+                    future_bboxes = linked_bboxes[future_frame_idx]
+                    for fb in future_bboxes:
+                        if fb.prev is None:
+                            dist_threshold = (future_frame_idx - frame_idx) * bbox_dist_threshold/4
+                            if bbox_dist(cb.bbox, fb.bbox) <= dist_threshold:
+                                print(f"{frame_idx}:{cb.hash}->{future_frame_idx}:{fb.hash}={bbox_dist(cb.bbox, fb.bbox)}<{dist_threshold}")
+                                cb.next = fb.hash
+                                fb.prev = cb.hash
+                                break
+                    if cb.next is not None:
+                        break
+
+    # Backward iteration: find the previous linked bbox for bboxes without prev
+    for frame_idx in range(len(linked_bboxes) - 1, 0, -1):
+        current_bboxes = linked_bboxes[frame_idx]
+        for cb in current_bboxes:
+            if cb.prev is None:
+                for past_frame_idx in range(frame_idx - 1, -1, -1):
+                    past_bboxes = linked_bboxes[past_frame_idx]
+                    for pb in past_bboxes:
+                        if pb.next is None:
+                            dist_threshold = (frame_idx - past_frame_idx) * bbox_dist_threshold/4
+                            if bbox_dist(cb.bbox, pb.bbox) <= dist_threshold:
+                                print(f"{frame_idx}:{cb.hash}->{past_frame_idx}:{pb.hash}={bbox_dist(cb.bbox, pb.bbox)}<{dist_threshold}")
+                                cb.prev = pb.hash
+                                pb.next = cb.hash
+                                break
+                    if cb.prev is not None:
+                        break
+
+    return linked_bboxes
 
 def main(input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_dist_threshold=0.5):
     if not os.path.exists(output_folder):
@@ -155,6 +193,7 @@ def main(input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_d
     cap.release()
 
     linked_bboxes = direct_connection(detections, bbox_dist_threshold)
+    linked_bboxes = infer_connection(linked_bboxes, bbox_dist_threshold)
 
     cap = cv2.VideoCapture(input_video_path)  # Reopen the video to read frames again
     for frame_idx in range(frame_count):
