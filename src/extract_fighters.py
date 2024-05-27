@@ -53,20 +53,22 @@ def bbox_dist(bbox1, bbox2):
         (x1 + w1, y1),
         (x1, y1 + h1),
         (x1 + w1, y1 + h1),
-        (x1 + w1 / 2, y1 + h1 / 2),
+        # (x1 + w1 / 2, y1 + h1 / 2),
     ]
     vertices2 = [
         (x2, y2),
         (x2 + w2, y2),
         (x2, y2 + h2),
         (x2 + w2, y2 + h2),
-        (x2 + w2 / 2, y2 + h2 / 2),
+        # (x2 + w2 / 2, y2 + h2 / 2),
     ]
+    centroid1 = (x1 + w1 / 2, y1 + h1 / 2)
+    centroid2 = (x2 + w2 / 2, y2 + h2 / 2)
 
     avg_diagonal = (diagonal_length(bbox1) + diagonal_length(bbox2)) / 2
-    avg_distance = (
-        sum(euclidean_distance(v1, v2) for v1, v2 in zip(vertices1, vertices2)) / 5
-    )
+    avg_distance = ((
+        sum(euclidean_distance(v1, v2) for v1, v2 in zip(vertices1, vertices2)) / 4
+    ) + (euclidean_distance(centroid1, centroid2)))/2
 
     return avg_distance / avg_diagonal
 
@@ -135,7 +137,7 @@ def infer_connection(linked_bboxes, bbox_dist_threshold):
                     future_bboxes = linked_bboxes[future_frame_idx]
                     for fb in future_bboxes:
                         if fb.prev is None:
-                            dist_threshold = (future_frame_idx - frame_idx) * bbox_dist_threshold/4
+                            dist_threshold = (future_frame_idx - frame_idx) * bbox_dist_threshold
                             if bbox_dist(cb.bbox, fb.bbox) <= dist_threshold:
                                 print(f"{frame_idx}:{cb.hash}->{future_frame_idx}:{fb.hash}={bbox_dist(cb.bbox, fb.bbox)}<{dist_threshold}")
                                 cb.next = fb.hash
@@ -153,7 +155,7 @@ def infer_connection(linked_bboxes, bbox_dist_threshold):
                     past_bboxes = linked_bboxes[past_frame_idx]
                     for pb in past_bboxes:
                         if pb.next is None:
-                            dist_threshold = (frame_idx - past_frame_idx) * bbox_dist_threshold/4
+                            dist_threshold = (frame_idx - past_frame_idx) * bbox_dist_threshold
                             if bbox_dist(cb.bbox, pb.bbox) <= dist_threshold:
                                 print(f"{frame_idx}:{cb.hash}->{past_frame_idx}:{pb.hash}={bbox_dist(cb.bbox, pb.bbox)}<{dist_threshold}")
                                 cb.prev = pb.hash
@@ -164,7 +166,12 @@ def infer_connection(linked_bboxes, bbox_dist_threshold):
 
     return linked_bboxes
 
-def main(input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_dist_threshold=0.5):
+# next, let's do the frame interpolateion.
+# 1. `interpolate_bbox` method. it should take in 2 `LinkedBbox`, if they are not consecutive frames, then interpolate the bbox (i.e. interpolate the coordinates of the 4 vertices) from the start to end frame, and instantiate `LinkedBbox` objects at corresponding frames. 
+# 2. a wrapper method that iterate through the frames and call `interpolate_bbox` if necessary
+# 3. modified `cv2.rectangle` in `main()` such that plots green bbox for detected, and red bbox for interpolated
+
+def main(input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_dist_threshold):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
 
