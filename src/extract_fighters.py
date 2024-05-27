@@ -17,7 +17,9 @@ YOLO_MODEL.classes = [0]  # Set model to detect only people (class 0)
 
 
 # Load Mask R-CNN model
-# mask_rcnn_model = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True).eval().cuda()
+MRCNN_MODEL = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True).eval().to(DEVICE)
+
+
 def extract_person_yolo(frame, yolo_model, threshold, min_area):
     img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     results = yolo_model(img)
@@ -33,6 +35,30 @@ def extract_person_yolo(frame, yolo_model, threshold, min_area):
                     bboxes.append(bbox)
 
     return bboxes
+
+def extract_person_rcnn(frame, rcnn_model, min_confidence):
+    pil_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    pil_img = torch.tensor(pil_img).permute(2, 0, 1).float().div(255).unsqueeze(0).to(DEVICE)
+
+    # Perform Mask R-CNN detection
+    with torch.no_grad():
+        results = rcnn_model(pil_img)
+
+    for idx in range(len(results[0]['masks'])):
+        score = results[0]['scores'][idx].item()
+        if score < min_confidence:
+            continue
+
+        mask_rcnn = results[0]['masks'][idx, 0].mul(255).byte().cpu().numpy()
+        contours, _ = cv2.findContours(mask_rcnn, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        cv2.drawContours(frame, contours, -1, (0, 255, 0), 2)
+
+        # Label the confidence score
+        for contour in contours:
+            x, y, w, h = cv2.boundingRect(contour)
+            cv2.putText(frame, f"{score:.2f}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+    return frame
 
 
 def bbox_dist(bbox1, bbox2):
@@ -220,7 +246,7 @@ def interpolate_missing_bboxes(linked_bboxes):
 
 
 def main(
-    input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_dist_threshold
+    input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_dist_threshold, rcnn_threshold
 ):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -257,7 +283,7 @@ def main(
     linked_bboxes = interpolate_missing_bboxes(linked_bboxes)
 
     # Prepare the output video writer
-    output_video_path = os.path.join(output_folder, "output_video.mp4")
+    output_video_path = os.path.join(output_folder, "output_video_rcnn.mp4")
     fourcc = cv2.VideoWriter_fourcc(*"mp4v")
     out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
 
@@ -286,6 +312,8 @@ def main(
                 h = min(frame_height - y, h)
                 mask[y : y + h, x : x + w] = frame[y : y + h, x : x + w]
 
+
+        mask = extract_person_rcnn(mask, MRCNN_MODEL, rcnn_threshold)
         out.write(mask)
 
     cap.release()
@@ -314,4 +342,5 @@ if __name__ == "__main__":
         yolo_threshold=0.382,
         min_area_ratio=0.05,
         bbox_dist_threshold=0.1,
+        rcnn_threshold=0.9,
     )
