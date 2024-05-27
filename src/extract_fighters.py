@@ -27,8 +27,6 @@ def extract_person_yolo(frame, yolo_model, threshold, min_area):
         if cls == 0 and conf >= threshold:
             x1, y1, x2, y2 = map(int, box)
             box_area = (x2 - x1) * (y2 - y1)
-            # if box_area >= min_area:
-            #     bboxes.append((x1, y1, x2 - x1, y2 - y1))
             if box_area >= min_area:
                 bbox = (x1, y1, x2 - x1, y2 - y1)
                 if bbox not in bboxes:  # Ensure no duplicates
@@ -53,14 +51,12 @@ def bbox_dist(bbox1, bbox2):
         (x1 + w1, y1),
         (x1, y1 + h1),
         (x1 + w1, y1 + h1),
-        # (x1 + w1 / 2, y1 + h1 / 2),
     ]
     vertices2 = [
         (x2, y2),
         (x2 + w2, y2),
         (x2, y2 + h2),
         (x2 + w2, y2 + h2),
-        # (x2 + w2 / 2, y2 + h2 / 2),
     ]
     centroid1 = (x1 + w1 / 2, y1 + h1 / 2)
     centroid2 = (x2 + w2 / 2, y2 + h2 / 2)
@@ -140,9 +136,9 @@ def infer_connection(linked_bboxes, bbox_dist_threshold):
                                 future_frame_idx - frame_idx
                             ) * bbox_dist_threshold
                             if bbox_dist(cb.bbox, fb.bbox) <= dist_threshold:
-                                print(
-                                    f"{frame_idx}:{cb.hash}->{future_frame_idx}:{fb.hash}={bbox_dist(cb.bbox, fb.bbox)}<{dist_threshold}"
-                                )
+                                # print(
+                                #     f"{frame_idx}:{cb.hash}->{future_frame_idx}:{fb.hash}={bbox_dist(cb.bbox, fb.bbox)}<{dist_threshold}"
+                                # )
                                 cb.next = fb
                                 fb.prev = cb
                                 break
@@ -162,9 +158,9 @@ def infer_connection(linked_bboxes, bbox_dist_threshold):
                                 frame_idx - past_frame_idx
                             ) * bbox_dist_threshold
                             if bbox_dist(cb.bbox, pb.bbox) <= dist_threshold:
-                                print(
-                                    f"{frame_idx}:{cb.hash}->{past_frame_idx}:{pb.hash}={bbox_dist(cb.bbox, pb.bbox)}<{dist_threshold}"
-                                )
+                                # print(
+                                #     f"{frame_idx}:{cb.hash}->{past_frame_idx}:{pb.hash}={bbox_dist(cb.bbox, pb.bbox)}<{dist_threshold}"
+                                # )
                                 cb.prev = pb
                                 pb.next = cb
                                 break
@@ -236,6 +232,7 @@ def main(
 
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    fps = cap.get(cv2.CAP_PROP_FPS)
     frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
 
     min_area = min_area_ratio * frame_width * frame_height
@@ -259,6 +256,11 @@ def main(
     linked_bboxes = infer_connection(linked_bboxes, bbox_dist_threshold)
     linked_bboxes = interpolate_missing_bboxes(linked_bboxes)
 
+    # Prepare the output video writer
+    output_video_path = os.path.join(output_folder, "output_video.mp4")
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
+
     cap = cv2.VideoCapture(input_video_path)  # Reopen the video to read frames again
     for frame_idx in range(frame_count):
         cap.set(
@@ -268,22 +270,26 @@ def main(
         if not ret:
             break
 
+        mask = np.zeros_like(frame)
+
         if frame_idx in linked_bboxes:
             for node in linked_bboxes[frame_idx]:
                 x, y, w, h = map(int, node.bbox)
-                color = (
-                    (0, 255, 0) if not node.is_interpolated else (0, 0, 255)
-                )  # Green for YOLO-detected, Red for interpolated
-                cv2.rectangle(frame, (x, y), (x + w, y + h), color, 2)
-                label = f"ID: {node.hash[:6]}"  # Display first 6 characters of the hash
-                cv2.putText(
-                    frame, label, (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
-                )
+                # Expand bbox size by 5%
+                x -= int(0.05 * w)
+                y -= int(0.05 * h)
+                w = int(1.1 * w)
+                h = int(1.1 * h)
+                x = max(0, x)
+                y = max(0, y)
+                w = min(frame_width - x, w)
+                h = min(frame_height - y, h)
+                mask[y : y + h, x : x + w] = frame[y : y + h, x : x + w]
 
-        frame_output_path = os.path.join(output_folder, f"{frame_idx}.jpg")
-        cv2.imwrite(frame_output_path, frame)
+        out.write(mask)
 
     cap.release()
+    out.release()
     cv2.destroyAllWindows()
 
     linked_bboxes_json = {
@@ -294,7 +300,7 @@ def main(
     with open(os.path.join(output_folder, "linked_bboxes.json"), "w") as f:
         json.dump(linked_bboxes_json, f, indent=4)
 
-    print("Processing complete, frames saved to", output_folder)
+    print("Processing complete, frames and video saved to", output_folder)
 
 
 if __name__ == "__main__":
