@@ -244,6 +244,97 @@ def interpolate_missing_bboxes(linked_bboxes):
 
     return linked_bboxes
 
+def detect_skin(frame, contour):
+    # Create a mask for the contour shape
+    mask = np.zeros(frame.shape[:2], dtype=np.uint8)
+    cv2.drawContours(mask, [contour], -1, 255, thickness=cv2.FILLED)
+
+    # Get bounding box of the contour
+    x, y, w, h = cv2.boundingRect(contour)
+    
+    # Only check the upper 60% of the contour
+    top_y = y
+    bottom_y = y + int(h * 0.6)
+
+    # Mask out the bottom 40%
+    mask[bottom_y:] = 0
+
+    # Apply the mask to the frame
+    cropped_frame = cv2.bitwise_and(frame, frame, mask=mask)
+
+    # Convert to HSV color space
+    hsv = cv2.cvtColor(cropped_frame, cv2.COLOR_BGR2HSV)
+    lower_skin = np.array([0, 20, 70], dtype=np.uint8)
+    upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+
+    # Create a mask for skin color
+    skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
+
+    # Calculate the percentage of skin area
+    skin_area = cv2.countNonZero(skin_mask)
+    total_area = cv2.countNonZero(mask)
+    skin_percentage = skin_area / total_area if total_area > 0 else 0
+
+    return skin_percentage
+
+def evaluate_fighter_likelihood(frame, contour):
+    # Calculate skin exposure in the upper 60% of the contour
+    skin_percentage = detect_skin(frame, contour)
+
+    # Get bounding box of the contour
+    x, y, w, h = cv2.boundingRect(contour)
+    
+    # Calculate bounding box area
+    bbox_area = w * h
+
+    # Heuristic: combine skin exposure and bounding box area
+    # You can adjust the weights based on experimentation
+    skin_weight = 0.7
+    area_weight = 0.3
+
+    # Normalize the bounding box area (you may need to adjust this normalization factor based on your video resolution)
+    normalized_bbox_area = bbox_area / (frame.shape[0] * frame.shape[1])
+
+    fighter_likelihood = skin_weight * skin_percentage + area_weight * normalized_bbox_area
+
+    return fighter_likelihood
+
+def extract_person_rcnn(frame, rcnn_model, min_confidence):
+    pil_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    pil_img = torch.tensor(pil_img).permute(2, 0, 1).float().div(255).unsqueeze(0).to(DEVICE)
+
+    # Perform Mask R-CNN detection
+    with torch.no_grad():
+        results = rcnn_model(pil_img)
+
+    contours_with_likelihood = []
+
+    for idx in range(len(results[0]['masks'])):
+        score = results[0]['scores'][idx].item()
+        if score < min_confidence:
+            continue
+
+        mask_rcnn = results[0]['masks'][idx, 0].mul(255).byte().cpu().numpy()
+        contours, _ = cv2.findContours(mask_rcnn, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+        for contour in contours:
+            fighter_likelihood = evaluate_fighter_likelihood(frame, contour)
+            contours_with_likelihood.append((contour, fighter_likelihood))
+
+    # Sort contours by likelihood and keep only the top two
+    contours_with_likelihood.sort(key=lambda x: x[1], reverse=True)
+    top_contours = contours_with_likelihood[:2]
+
+    mask = np.zeros_like(frame)
+    for contour, likelihood in top_contours:
+        cv2.drawContours(mask, [contour], -1, (255, 255, 255), thickness=cv2.FILLED)
+        x, y, w, h = cv2.boundingRect(contour)
+        cv2.putText(frame, f"{likelihood:.2f}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+    result_frame = cv2.bitwise_and(frame, mask)
+
+    return result_frame
+
 
 def main(
     input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_dist_threshold, rcnn_threshold
@@ -311,7 +402,6 @@ def main(
                 w = min(frame_width - x, w)
                 h = min(frame_height - y, h)
                 mask[y : y + h, x : x + w] = frame[y : y + h, x : x + w]
-
 
         mask = extract_person_rcnn(mask, MRCNN_MODEL, rcnn_threshold)
         out.write(mask)
