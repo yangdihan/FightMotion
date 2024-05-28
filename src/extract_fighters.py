@@ -337,6 +337,28 @@ def extract_fighter_contour(frame, rcnn_model, min_confidence):
     return result_frame, top_contours, mask
 
 
+def infer_missing_contours(contours_last, contours_this, bbox_dist_threshold):
+    # Get bounding boxes for last and current contours
+    bboxes_last = [cv2.boundingRect(contour) for contour in contours_last]
+    bboxes_this = [cv2.boundingRect(contour) for contour in contours_this]
+
+    paired_last = [False] * len(contours_last)
+    paired_this = [False] * len(contours_this)
+
+    for i, bbox_this in enumerate(bboxes_this):
+        for j, bbox_last in enumerate(bboxes_last):
+            if bbox_dist(bbox_this, bbox_last) <= bbox_dist_threshold:
+                paired_this[i] = True
+                paired_last[j] = True
+
+    # Add unpaired contours from the last frame to the current frame
+    for i, paired in enumerate(paired_last):
+        if not paired:
+            contours_this.append(contours_last[i])
+
+    return contours_this
+
+
 def main(
     input_video_path,
     output_folder,
@@ -390,6 +412,7 @@ def main(
 
     cap = cv2.VideoCapture(input_video_path)  # Reopen the video to read frames again
     previous_non_blank_pixel_count = None
+    top_contours_last = []
 
     for frame_idx in range(frame_count):
         cap.set(
@@ -418,28 +441,49 @@ def main(
         result_frame, top_contours, mask = extract_fighter_contour(
             mask, MRCNN_MODEL, rcnn_threshold
         )
+
+        # Check non-blank pixels
+        non_blank_pixel_count = cv2.countNonZero(cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
+        if previous_non_blank_pixel_count is not None:
+            if non_blank_pixel_count < previous_non_blank_pixel_count * 0.618:
+                # Significant drop detected, infer missing contours
+                contours_last = [c for c, _ in top_contours_last]
+                contours_this = [c for c, _ in top_contours]
+                contours_this = infer_missing_contours(
+                    contours_last, contours_this, bbox_dist_threshold
+                )
+
+                # Redraw the contours on the result frame
+                mask = np.zeros_like(frame)
+                for contour in contours_this:
+                    cv2.drawContours(
+                        mask, [contour], -1, (255, 255, 255), thickness=cv2.FILLED
+                    )
+
+                result_frame = cv2.bitwise_and(frame, mask)
+                cv2.putText(
+                    result_frame,
+                    "Warning: Drop in detected pixels - Fixed",
+                    (50, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 255, 0),
+                    2,
+                )
+        else:
+            result_frame = cv2.bitwise_and(frame, mask)
+
         out.write(result_frame)
 
         # Save frame as jpg
         frame_output_path = os.path.join(frame_output_folder, f"{frame_idx}.jpg")
         cv2.imwrite(frame_output_path, result_frame)
 
-        # Check non-blank pixels
-        non_blank_pixel_count = cv2.countNonZero(cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
-        if previous_non_blank_pixel_count is not None:
-            if non_blank_pixel_count < previous_non_blank_pixel_count * 0.618:
-                cv2.putText(
-                    result_frame,
-                    "Warning: Drop in detected pixels",
-                    (50, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (0, 0, 255),
-                    2,
-                )
-                cv2.imwrite(frame_output_path, result_frame)  # Save the warning frame
-
         previous_non_blank_pixel_count = non_blank_pixel_count
+        top_contours_last = (
+            top_contours  # Store the current top contours for the next iteration
+        )
+        prev_frame = frame.copy()
 
     cap.release()
     out.release()
