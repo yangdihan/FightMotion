@@ -1,4 +1,5 @@
 import os
+import time
 import json
 import hashlib
 import numpy as np
@@ -17,48 +18,35 @@ YOLO_MODEL.classes = [0]  # Set model to detect only people (class 0)
 
 
 # Load Mask R-CNN model
-MRCNN_MODEL = torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True).eval().to(DEVICE)
+MRCNN_MODEL = (
+    torchvision.models.detection.maskrcnn_resnet50_fpn(pretrained=True)
+    .eval()
+    .to(DEVICE)
+)
 
 
-def extract_person_yolo(frame, yolo_model, threshold, min_area):
-    img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    results = yolo_model(img)
-    bboxes = []
+class LinkedBbox:
+    def __init__(self, bbox=None, frame=None, is_interpolated=False):
+        self.bbox = bbox
+        self.prev = None
+        self.next = None
+        self.frame = frame
+        self.is_interpolated = is_interpolated
+        self.hash = self.compute_hash()
 
-    for *box, conf, cls in results.xyxy[0].cpu().numpy():
-        if cls == 0 and conf >= threshold:
-            x1, y1, x2, y2 = map(int, box)
-            box_area = (x2 - x1) * (y2 - y1)
-            if box_area >= min_area:
-                bbox = (x1, y1, x2 - x1, y2 - y1)
-                if bbox not in bboxes:  # Ensure no duplicates
-                    bboxes.append(bbox)
+    def compute_hash(self):
+        bbox_str = f"{self.bbox}-{self.frame}"
+        return hashlib.md5(bbox_str.encode()).hexdigest()
 
-    return bboxes
-
-def extract_person_rcnn(frame, rcnn_model, min_confidence):
-    pil_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    pil_img = torch.tensor(pil_img).permute(2, 0, 1).float().div(255).unsqueeze(0).to(DEVICE)
-
-    # Perform Mask R-CNN detection
-    with torch.no_grad():
-        results = rcnn_model(pil_img)
-
-    for idx in range(len(results[0]['masks'])):
-        score = results[0]['scores'][idx].item()
-        if score < min_confidence:
-            continue
-
-        mask_rcnn = results[0]['masks'][idx, 0].mul(255).byte().cpu().numpy()
-        contours, _ = cv2.findContours(mask_rcnn, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        cv2.drawContours(frame, contours, -1, (0, 255, 0), 2)
-
-        # Label the confidence score
-        for contour in contours:
-            x, y, w, h = cv2.boundingRect(contour)
-            cv2.putText(frame, f"{score:.2f}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-
-    return frame
+    def to_dict(self):
+        return {
+            "bbox": self.bbox,
+            "frame": self.frame,
+            "is_interpolated": self.is_interpolated,
+            "hash": self.hash,
+            "prev": self.prev.hash if self.prev else None,
+            "next": self.next.hash if self.next else None,
+        }
 
 
 def bbox_dist(bbox1, bbox2):
@@ -96,28 +84,21 @@ def bbox_dist(bbox1, bbox2):
     return avg_distance / avg_diagonal
 
 
-class LinkedBbox:
-    def __init__(self, bbox=None, frame=None, is_interpolated=False):
-        self.bbox = bbox
-        self.prev = None
-        self.next = None
-        self.frame = frame
-        self.is_interpolated = is_interpolated
-        self.hash = self.compute_hash()
+def extract_person_yolo(frame, yolo_model, threshold, min_area):
+    img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    results = yolo_model(img)
+    bboxes = []
 
-    def compute_hash(self):
-        bbox_str = f"{self.bbox}-{self.frame}"
-        return hashlib.md5(bbox_str.encode()).hexdigest()
+    for *box, conf, cls in results.xyxy[0].cpu().numpy():
+        if cls == 0 and conf >= threshold:
+            x1, y1, x2, y2 = map(int, box)
+            box_area = (x2 - x1) * (y2 - y1)
+            if box_area >= min_area:
+                bbox = (x1, y1, x2 - x1, y2 - y1)
+                if bbox not in bboxes:  # Ensure no duplicates
+                    bboxes.append(bbox)
 
-    def to_dict(self):
-        return {
-            "bbox": self.bbox,
-            "frame": self.frame,
-            "is_interpolated": self.is_interpolated,
-            "hash": self.hash,
-            "prev": self.prev.hash if self.prev else None,
-            "next": self.next.hash if self.next else None,
-        }
+    return bboxes
 
 
 def direct_connection(detections, bbox_dist_threshold):
@@ -244,6 +225,33 @@ def interpolate_missing_bboxes(linked_bboxes):
 
     return linked_bboxes
 
+
+def extract_person_rcnn(frame, rcnn_model, min_confidence):
+    pil_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    pil_img = (
+        torch.tensor(pil_img).permute(2, 0, 1).float().div(255).unsqueeze(0).to(DEVICE)
+    )
+
+    # Perform Mask R-CNN detection
+    with torch.no_grad():
+        results = rcnn_model(pil_img)
+
+    contours_with_likelihood = []
+
+    for idx in range(len(results[0]["masks"])):
+        score = results[0]["scores"][idx].item()
+        if score < min_confidence:
+            continue
+
+        mask_rcnn = results[0]["masks"][idx, 0].mul(255).byte().cpu().numpy()
+        contours, _ = cv2.findContours(
+            mask_rcnn, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+        )
+        contours_with_likelihood.extend(contours)
+
+    return contours_with_likelihood
+
+
 def detect_skin(frame, contour):
     # Create a mask for the contour shape
     mask = np.zeros(frame.shape[:2], dtype=np.uint8)
@@ -251,10 +259,10 @@ def detect_skin(frame, contour):
 
     # Get bounding box of the contour
     x, y, w, h = cv2.boundingRect(contour)
-    
+
     # Only check the upper 60% of the contour
     top_y = y
-    bottom_y = y + int(h * 0.6)
+    bottom_y = y + int(h * 0.618)
 
     # Mask out the bottom 40%
     mask[bottom_y:] = 0
@@ -277,70 +285,72 @@ def detect_skin(frame, contour):
 
     return skin_percentage
 
+
 def evaluate_fighter_likelihood(frame, contour):
     # Calculate skin exposure in the upper 60% of the contour
     skin_percentage = detect_skin(frame, contour)
 
     # Get bounding box of the contour
     x, y, w, h = cv2.boundingRect(contour)
-    
+
     # Calculate bounding box area
     bbox_area = w * h
-
-    # Heuristic: combine skin exposure and bounding box area
-    # You can adjust the weights based on experimentation
-    skin_weight = 0.7
-    area_weight = 0.3
 
     # Normalize the bounding box area (you may need to adjust this normalization factor based on your video resolution)
     normalized_bbox_area = bbox_area / (frame.shape[0] * frame.shape[1])
 
-    fighter_likelihood = skin_weight * skin_percentage + area_weight * normalized_bbox_area
+    return (skin_percentage, normalized_bbox_area)
 
-    return fighter_likelihood
 
-def extract_person_rcnn(frame, rcnn_model, min_confidence):
-    pil_img = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    pil_img = torch.tensor(pil_img).permute(2, 0, 1).float().div(255).unsqueeze(0).to(DEVICE)
+def extract_fighter_contour(frame, rcnn_model, min_confidence):
+    contours = extract_person_rcnn(frame, rcnn_model, min_confidence)
 
-    # Perform Mask R-CNN detection
-    with torch.no_grad():
-        results = rcnn_model(pil_img)
+    if not contours:
+        return frame, [], []
 
-    contours_with_likelihood = []
+    contours_with_likelihood = [
+        (contour, evaluate_fighter_likelihood(frame, contour)) for contour in contours
+    ]
 
-    for idx in range(len(results[0]['masks'])):
-        score = results[0]['scores'][idx].item()
-        if score < min_confidence:
-            continue
-
-        mask_rcnn = results[0]['masks'][idx, 0].mul(255).byte().cpu().numpy()
-        contours, _ = cv2.findContours(mask_rcnn, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        for contour in contours:
-            fighter_likelihood = evaluate_fighter_likelihood(frame, contour)
-            contours_with_likelihood.append((contour, fighter_likelihood))
-
-    # Sort contours by likelihood and keep only the top two
-    contours_with_likelihood.sort(key=lambda x: x[1], reverse=True)
+    # Sort contours by combined likelihood and keep only the top two
+    contours_with_likelihood.sort(
+        key=lambda x: x[1][0] * 0.618 + x[1][1] * 0.382, reverse=True
+    )
     top_contours = contours_with_likelihood[:2]
 
     mask = np.zeros_like(frame)
     for contour, likelihood in top_contours:
         cv2.drawContours(mask, [contour], -1, (255, 255, 255), thickness=cv2.FILLED)
+
+        # Get the bounding box and centroid of the contour
         x, y, w, h = cv2.boundingRect(contour)
-        cv2.putText(frame, f"{likelihood:.2f}", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        cx, cy = x + w // 2, y + h // 2
+
+        # Label the tuple (skin_percentage, normalized_bbox_area) inside the contour at the middle
+        label = f"({likelihood[0]:.2f},{likelihood[1]:.2f})"
+        cv2.putText(
+            frame, label, (cx, cy), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2
+        )
 
     result_frame = cv2.bitwise_and(frame, mask)
 
-    return result_frame
+    return result_frame, top_contours, mask
 
 
 def main(
-    input_video_path, output_folder, yolo_threshold, min_area_ratio, bbox_dist_threshold, rcnn_threshold
+    input_video_path,
+    output_folder,
+    yolo_threshold,
+    min_area_ratio,
+    bbox_dist_threshold,
+    rcnn_threshold,
 ):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
+
+    frame_output_folder = os.path.join(output_folder, "frames")
+    if not os.path.exists(frame_output_folder):
+        os.makedirs(frame_output_folder)
 
     cap = cv2.VideoCapture(input_video_path)
     if not cap.isOpened():
@@ -379,6 +389,8 @@ def main(
     out = cv2.VideoWriter(output_video_path, fourcc, fps, (frame_width, frame_height))
 
     cap = cv2.VideoCapture(input_video_path)  # Reopen the video to read frames again
+    previous_non_blank_pixel_count = None
+
     for frame_idx in range(frame_count):
         cap.set(
             cv2.CAP_PROP_POS_FRAMES, frame_idx + 1
@@ -403,8 +415,31 @@ def main(
                 h = min(frame_height - y, h)
                 mask[y : y + h, x : x + w] = frame[y : y + h, x : x + w]
 
-        mask = extract_person_rcnn(mask, MRCNN_MODEL, rcnn_threshold)
-        out.write(mask)
+        result_frame, top_contours, mask = extract_fighter_contour(
+            mask, MRCNN_MODEL, rcnn_threshold
+        )
+        out.write(result_frame)
+
+        # Save frame as jpg
+        frame_output_path = os.path.join(frame_output_folder, f"{frame_idx}.jpg")
+        cv2.imwrite(frame_output_path, result_frame)
+
+        # Check non-blank pixels
+        non_blank_pixel_count = cv2.countNonZero(cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY))
+        if previous_non_blank_pixel_count is not None:
+            if non_blank_pixel_count < previous_non_blank_pixel_count * 0.618:
+                cv2.putText(
+                    result_frame,
+                    "Warning: Drop in detected pixels",
+                    (50, 50),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (0, 0, 255),
+                    2,
+                )
+                cv2.imwrite(frame_output_path, result_frame)  # Save the warning frame
+
+        previous_non_blank_pixel_count = non_blank_pixel_count
 
     cap.release()
     out.release()
