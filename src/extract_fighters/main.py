@@ -50,6 +50,11 @@ class VideoStream:
         self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         return
 
+    def read_frame(self, frame_idx):
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx + 1)
+        ret, frame = self.cap.read()
+        return ret, frame
+
     def output(self, output_folder):
         print(f"Exporting frames...")
         if not os.path.exists(output_folder):

@@ -5,7 +5,7 @@ import torchvision
 import cv2
 
 from extract_fighters.constants import DEVICE
-from extract_fighters.utils import bbox_dist, read_frame
+from extract_fighters.utils import bbox_dist
 
 # Load Mask R-CNN model
 MRCNN_MODEL = (
@@ -147,7 +147,7 @@ def main(video_stream, rcnn_threshold, significant_drop_ratio, bbox_dist_thresho
     top_contours_last = []
 
     for frame_idx in tqdm(range(video_stream.frame_count)):
-        ret, frame = read_frame(video_stream.cap, frame_idx)
+        ret, frame = video_stream.read_frame(frame_idx)
         if not ret:
             break
 

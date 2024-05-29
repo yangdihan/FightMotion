@@ -1,16 +1,41 @@
 from tqdm import tqdm
+import hashlib
 import numpy as np
 import torch
 import cv2
 
 from extract_fighters.constants import DEVICE, MASK_EXPAND_RATIO
-from extract_fighters.utils import LinkedBbox, bbox_dist, read_frame
+from extract_fighters.utils import bbox_dist
 
 # Load YOLOv5 model
 YOLO_MODEL = (
     torch.hub.load("ultralytics/yolov5", "yolov5s", pretrained=True).eval().to(DEVICE)
 )
 YOLO_MODEL.classes = [0]  # Set model to detect only people (class 0)
+
+
+class LinkedBbox:
+    def __init__(self, bbox=None, frame=None, is_interpolated=False):
+        self.bbox = bbox
+        self.prev = None
+        self.next = None
+        self.frame = frame
+        self.is_interpolated = is_interpolated
+        self.hash = self.compute_hash()
+
+    def compute_hash(self):
+        bbox_str = f"{self.bbox}-{self.frame}"
+        return hashlib.md5(bbox_str.encode()).hexdigest()
+
+    def to_dict(self):
+        return {
+            "bbox": self.bbox,
+            "frame": self.frame,
+            "is_interpolated": self.is_interpolated,
+            "hash": self.hash,
+            "prev": self.prev.hash if self.prev else None,
+            "next": self.next.hash if self.next else None,
+        }
 
 
 def extract_person_yolo(frame, yolo_model, threshold, min_area):
@@ -34,7 +59,7 @@ def get_yolo_detections(video_stream, yolo_model, threshold, min_area):
     print(f"Detecting human bbox by YOLO...")
     detections = {}
     for frame_idx in tqdm(range(video_stream.frame_count)):
-        ret, frame = read_frame(video_stream.cap, frame_idx)
+        ret, frame = video_stream.read_frame(frame_idx)
         if not ret:
             break
 
@@ -208,7 +233,7 @@ def main(video_stream, yolo_threshold, min_area_ratio, bbox_dist_threshold):
     linked_bboxes = interpolate_missing_bboxes(linked_bboxes)
 
     for frame_idx in tqdm(range(video_stream.frame_count)):
-        ret, frame = read_frame(video_stream.cap, frame_idx)
+        ret, frame = video_stream.read_frame(frame_idx)
         if not ret:
             break
 
