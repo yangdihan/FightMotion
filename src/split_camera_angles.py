@@ -1,5 +1,6 @@
 import cv2
-from skimage.metrics import structural_similarity as ssim
+
+# from skimage.metrics import structural_similarity as ssim
 import numpy as np
 import os
 
@@ -13,6 +14,7 @@ THRES_FRAME_SIMILARITY = 0.7
 #     frame2_gray = cv2.cvtColor(frame2, cv2.COLOR_BGR2GRAY)
 #     similarity = ssim(frame1_gray, frame2_gray)
 #     return similarity
+
 
 def frame_similarity(frame1, frame2):
     """Calculate frame similarity using absolute difference and count of non-zero pixels using CUDA."""
@@ -35,17 +37,30 @@ def frame_similarity(frame1, frame2):
     return similarity_score
 
 
-def save_clip(start_frame, end_frame, video_path, output_folder, cap, frame_width, frame_height, fps):
+def save_clip(
+    start_frame,
+    end_frame,
+    video_path,
+    output_folder,
+    cap,
+    frame_width,
+    frame_height,
+    fps,
+):
     """Save the video clip from start_frame to end_frame if it is at least 1 second long."""
     frame_count = end_frame - start_frame
     if frame_count < fps:  # Check if the segment length is less than 1 second
-        print(f"Skipping clip from Frame {start_frame} to {end_frame} - less than 1 second long.")
+        print(
+            f"Skipping clip from Frame {start_frame} to {end_frame} - less than 1 second long."
+        )
         return
 
     cap.set(cv2.CAP_PROP_POS_FRAMES, start_frame)
-    output_path = os.path.join(output_folder, f'clip_{start_frame}_{end_frame}.mp4')
-    out = cv2.VideoWriter(output_path, cv2.VideoWriter_fourcc(*'mp4v'), fps, (frame_width, frame_height))
-    
+    output_path = os.path.join(output_folder, f"clip_{start_frame}_{end_frame}.mp4")
+    out = cv2.VideoWriter(
+        output_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (frame_width, frame_height)
+    )
+
     for _ in range(frame_count):
         ret, frame = cap.read()
         if not ret:
@@ -54,13 +69,14 @@ def save_clip(start_frame, end_frame, video_path, output_folder, cap, frame_widt
     out.release()
     print(f"Saved clip: {output_path}")
 
+
 def main(video_path, output_folder):
     # Open the video
     cap = cv2.VideoCapture(video_path)
     fps = cap.get(cv2.CAP_PROP_FPS)
     frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-    
+
     # Ensure output directory exists
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
@@ -70,7 +86,7 @@ def main(video_path, output_folder):
     if not ret:
         print("Failed to read video")
         return
-    
+
     frame_index = 0
     start_frame = 0  # Start of new segment
     while True:
@@ -79,32 +95,55 @@ def main(video_path, output_folder):
         if not ret:
             # Save the last segment
             if frame_index > start_frame:
-                save_clip(start_frame, frame_index, video_path, output_folder, cap, frame_width, frame_height, fps)
+                save_clip(
+                    start_frame,
+                    frame_index,
+                    video_path,
+                    output_folder,
+                    cap,
+                    frame_width,
+                    frame_height,
+                    fps,
+                )
                 break
-        
+
         # Calculate similarity
         similarity = frame_similarity(prev_frame, curr_frame)
 
         # If similarity is below a threshold, it might be a camera change
         if similarity < THRES_FRAME_SIMILARITY:  # This threshold might need adjustment
-            print(f"Camera angle change detected between Frame {frame_index} and Frame {frame_index + 1}")
+            print(
+                f"Camera angle change detected between Frame {frame_index} and Frame {frame_index + 1}"
+            )
             # Save the previous segment
-            save_clip(start_frame, frame_index, video_path, output_folder, cap, frame_width, frame_height, fps)
+            save_clip(
+                start_frame,
+                frame_index,
+                video_path,
+                output_folder,
+                cap,
+                frame_width,
+                frame_height,
+                fps,
+            )
             # Start a new segment
             start_frame = frame_index + 1
-        
+
         # Update previous frame and index
         prev_frame = curr_frame
         frame_index += 1
-    
+
     cap.release()
 
-if __name__ == "__main__":
-    video_path = os.path.join(DATA_DIR_RAW, 'tj_2_angles.mp4')  # Update this with the path to your video
-    output_folder = DATA_DIR_INT  # Folder to save clips
-    main(video_path, output_folder)
 
-    # if cv2.cuda.getCudaEnabledDeviceCount() == 0:
-    #     print("CUDA is not available in your OpenCV installation")
-    # else:
-    #     print('yea')
+if __name__ == "__main__":
+    video_path = os.path.join(
+        DATA_DIR_RAW, "best_ko_combos.mp4"
+    )  # Update this with the path to your video
+    output_folder = DATA_DIR_INT  # Folder to save clips
+    # main(video_path, output_folder)
+
+    if cv2.cuda.getCudaEnabledDeviceCount() == 0:
+        print("CUDA is not available in your OpenCV installation")
+    else:
+        print("yea")
