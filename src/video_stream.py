@@ -30,10 +30,17 @@ class VideoStream:
         self.frame_height = int(self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
         self.fps = self.cap.get(cv2.CAP_PROP_FPS)
         self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
-        self.frames = [Frame(idx) for idx in range(self.frame_count)]
+        self.frames = [None] * self.frame_count
+
+        for frame_idx in range(self.frame_count):
+            ret, pixels = self.read_frame(frame_idx)
+            if not ret:
+                break
+            self.frames[frame_idx] = Frame(frame_idx, pixels)
+        return
 
     def read_frame(self, frame_idx):
-        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx + 1)
+        self.cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
         ret, frame = self.cap.read()
         return ret, frame
 
@@ -55,44 +62,24 @@ class VideoStream:
         )
 
         for frame in tqdm(self.frames):
-            out.write(frame.frame)
+            out.write(frame.pixels)
             frame_output_path = os.path.join(frame_output_folder, f"{frame.idx}.jpg")
-            cv2.imwrite(frame_output_path, frame.frame)
+            cv2.imwrite(frame_output_path, frame.pixels)
 
         out.release()
 
-    def get_yolo_detections(self, yolo_model, threshold, min_area):
-        print(f"Detecting human bbox by YOLO...")
-        detections = {}
-        for frame_idx in tqdm(range(self.frame_count)):
-            ret, frame_data = self.read_frame(frame_idx)
-            if not ret:
-                break
+    def direct_connection(self, bbox_dist_threshold):
 
-            bboxes = Frame.extract_person_yolo(
-                frame_data, yolo_model, threshold, min_area
-            )
-            detections[frame_idx] = bboxes
+        for frame_idx in range(self.frame_count - 1):
 
-        return detections
-
-    def direct_connection(self, detections, bbox_dist_threshold):
-        linked_bboxes = {}
-
-        for frame_idx, bboxes in detections.items():
-            linked_bboxes[frame_idx] = [
-                Bbox(bbox=bbox, frame_idx=frame_idx) for bbox in bboxes
-            ]
-
-        for frame_idx in range(len(detections) - 1):
-            current_bboxes = linked_bboxes[frame_idx]
-            next_bboxes = linked_bboxes[frame_idx + 1]
+            current_bboxes = self.frames[frame_idx].bboxes
+            next_bboxes = self.frames[frame_idx + 1].bboxes
 
             for cb in current_bboxes:
                 min_dist = float("inf")
                 best_match = None
                 for nb in next_bboxes:
-                    dist = Bbox.bbox_dist(cb.bbox, nb.bbox)
+                    dist = Bbox.bbox_dist(cb, nb)
                     if dist < min_dist and dist <= bbox_dist_threshold:
                         min_dist = dist
                         best_match = nb
@@ -100,23 +87,22 @@ class VideoStream:
                 if best_match:
                     cb.next = best_match
                     best_match.prev = cb
+        return
 
-        return linked_bboxes
-
-    def infer_connection(self, linked_bboxes, bbox_dist_threshold):
+    def infer_connection(self, bbox_dist_threshold):
         # Forward iteration: find the next linked bbox for bboxes without next
-        for frame_idx in range(len(linked_bboxes) - 1):
-            current_bboxes = linked_bboxes[frame_idx]
+        for frame_idx in range(self.frame_count):
+            current_bboxes = self.frames[frame_idx].bboxes
             for cb in current_bboxes:
                 if cb.next is None:
-                    for future_frame_idx in range(frame_idx + 1, len(linked_bboxes)):
-                        future_bboxes = linked_bboxes[future_frame_idx]
+                    for future_frame_idx in range(frame_idx + 1, self.frame_count):
+                        future_bboxes = self.frames[future_frame_idx].bboxes
                         for fb in future_bboxes:
                             if fb.prev is None:
                                 dist_threshold = (
                                     future_frame_idx - frame_idx
                                 ) * bbox_dist_threshold
-                                if Bbox.bbox_dist(cb.bbox, fb.bbox) <= dist_threshold:
+                                if Bbox.bbox_dist(cb, fb) <= dist_threshold:
                                     cb.next = fb
                                     fb.prev = cb
                                     break
@@ -124,80 +110,106 @@ class VideoStream:
                             break
 
         # Backward iteration: find the previous linked bbox for bboxes without prev
-        for frame_idx in range(len(linked_bboxes) - 1, 0, -1):
-            current_bboxes = linked_bboxes[frame_idx]
+        for frame_idx in range(self.frame_count - 1, 0, -1):
+            current_bboxes = self.frames[frame_idx].bboxes
             for cb in current_bboxes:
                 if cb.prev is None:
                     for past_frame_idx in range(frame_idx - 1, -1, -1):
-                        past_bboxes = linked_bboxes[past_frame_idx]
+                        past_bboxes = self.frames[past_frame_idx].bboxes
                         for pb in past_bboxes:
                             if pb.next is None:
                                 dist_threshold = (
                                     frame_idx - past_frame_idx
                                 ) * bbox_dist_threshold
-                                if Bbox.bbox_dist(cb.bbox, pb.bbox) <= dist_threshold:
+                                if Bbox.bbox_dist(cb, pb) <= dist_threshold:
                                     cb.prev = pb
                                     pb.next = cb
                                     break
                         if cb.prev is not None:
                             break
 
-        return linked_bboxes
+        return
 
-    def interpolate_missing_bboxes(self, linked_bboxes):
-        all_bboxes = []
-        for frame_idx in sorted(linked_bboxes.keys()):
-            all_bboxes.extend(linked_bboxes[frame_idx])
+    def interpolate_missing_bboxes(self):
 
-        for bbox in all_bboxes:
-            if bbox.next and bbox.next.frame_idx != bbox.frame_idx + 1:
-                interpolated_bboxes = Bbox.interpolate_bbox(bbox, bbox.next)
-                for ib in interpolated_bboxes:
-                    if ib.frame_idx not in linked_bboxes:
-                        linked_bboxes[ib.frame_idx] = []
-                    linked_bboxes[ib.frame_idx].append(ib)
+        for frame in self.frames:
+            for bbox in frame.bboxes:
+                if bbox.next and bbox.next.frame.idx != frame.idx + 1:
+                    interpolated_bboxes = Bbox.interpolate_bbox(
+                        bbox, bbox.next, self.frames
+                    )
+                    for ib in interpolated_bboxes:
+                        self.frames[ib.frame.idx].bboxes.append(ib)
 
-            if bbox.prev and bbox.prev.frame_idx != bbox.frame_idx - 1:
-                interpolated_bboxes = Bbox.interpolate_bbox(bbox.prev, bbox)
-                for ib in interpolated_bboxes:
-                    if ib.frame_idx not in linked_bboxes:
-                        linked_bboxes[ib.frame_idx] = []
-                    linked_bboxes[ib.frame_idx].append(ib)
+                if bbox.prev and bbox.prev.frame.idx != frame.idx - 1:
+                    interpolated_bboxes = Bbox.interpolate_bbox(
+                        bbox.prev, bbox, self.frames
+                    )
+                    for ib in interpolated_bboxes:
+                        self.frames[ib.frame.idx].bboxes.append(ib)
 
-        return linked_bboxes
+        return
 
-    def infer_missing_contours(self, contours_last, contours_this, bbox_dist_threshold):
-        # Get bounding boxes for last and current contours
-        bboxes_last = [cv2.boundingRect(contour.geometry) for contour in contours_last]
-        bboxes_this = [cv2.boundingRect(contour.geometry) for contour in contours_this]
+    def mask_bboxes(self):
+        min_area = MIN_AREA_RATIO * self.frame_width * self.frame_height
 
-        paired_last = [False] * len(contours_last)
-        paired_this = [False] * len(contours_this)
+        print(f"Detecting human bbox by YOLO...")
+        for frame in tqdm(self.frames):
+            frame.extract_person_yolo(min_area)
 
-        for i, bbox_this in enumerate(bboxes_this):
-            for j, bbox_last in enumerate(bboxes_last):
-                if Bbox.bbox_dist(bbox_this, bbox_last) <= bbox_dist_threshold:
-                    paired_this[i] = True
-                    paired_last[j] = True
+        self.direct_connection(BBOX_DIST_THRESHOLD)
+        self.infer_connection(BBOX_DIST_THRESHOLD)
+        self.interpolate_missing_bboxes()
 
-        # Add unpaired contours from the last frame to the current frame
-        for i, paired in enumerate(paired_last):
-            if not paired:
-                contours_this.append(contours_last[i])
+        print(f"Masking bbox at each frame...")
+        for frame in self.frames:
+            frame.mask_bbox = frame.mask_frame_with_bbox(frame.bboxes)
+            frame.pixels = frame.crop_frame_with_mask(frame.mask_bbox)
 
-        return contours_this
+        return
+
+    def mask_contours(self):
+        print(f"Detecting fighter contour by RCNN...")
+
+        previous_non_blank_pixel_count = None
+        top_contours_last = []
+
+        for frame in tqdm(self.frames):
+
+            contours_top2 = frame.extract_fighter_contour()
+
+            mask_contour2 = frame.mask_frame_with_contours(contours_top2)
+
+            non_blank_pixel_count = cv2.countNonZero(
+                cv2.cvtColor(mask_contour2, cv2.COLOR_BGR2GRAY)
+            )
+
+            if Contour.significant_drop(
+                previous_non_blank_pixel_count,
+                non_blank_pixel_count,
+                SIGNIFICANT_DROP_RATIO,
+            ):
+                contours_top2 = Contour.infer_missing_contours(
+                    top_contours_last, contours_top2, BBOX_DIST_THRESHOLD
+                )
+                mask_contour2 = frame.mask_frame_with_contours(contours_top2)
+
+            frame.contours = contours_top2
+            frame.mask_contour = mask_contour2
+            frame.pixels_fighters = frame.crop_frame_with_mask()
+
+            previous_non_blank_pixel_count = non_blank_pixel_count
+            top_contours_last = contours_top2
+
+        return
 
 
 def run_extract_fighters(input_video_path, output_folder):
     video_stream = VideoStream(input_video_path)
 
-    video_stream = Frame.run_yolo_bbox(
-        video_stream, YOLO_THRESHOLD, MIN_AREA_RATIO, BBOX_DIST_THRESHOLD
-    )
+    video_stream.mask_bboxes()
 
-    video_stream = Contour.run_rcnn_contour(
-        video_stream, RCNN_THRESHOLD, SIGNIFICANT_DROP_RATIO, BBOX_DIST_THRESHOLD
-    )
+    # video_stream.mask_contours()
 
     video_stream.cap.release()
     video_stream.output(output_folder)
