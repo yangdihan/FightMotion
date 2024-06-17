@@ -18,15 +18,9 @@ class Frame:
     def __init__(self, idx, pixels) -> None:
         self.idx = idx
         self.pixels = pixels
-        # self.pixels_fighters = None
 
         self.bboxes = []
-        # self.mask_bbox = None
-        # self.frame_cropped_bbox = None
-
         self.contours = []
-        # self.mask_contour = None
-        # self.frame_cropped_contour = None
         return
 
     def mask_frame_with_bbox(self, bboxes):
@@ -40,7 +34,6 @@ class Frame:
         return cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
 
     def mask_frame_with_contours(self, contours):
-        # mask = np.zeros(self.pixels.shape[:2], dtype=np.uint8)
         mask = np.zeros_like(self.pixels)
 
         for contour in contours:
@@ -77,7 +70,7 @@ class Frame:
                     bbox = Bbox(xywh=xywh, frame=self, confidence=conf)
                     if bbox not in self.bboxes:  # Ensure no duplicates
                         self.bboxes.append(bbox)
-        # return bboxes
+
         return
 
     def extract_person_rcnn(self, min_confidence):
@@ -105,7 +98,6 @@ class Frame:
                 )
                 for contour_geom in contour_geoms:
                     self.contours.append(
-                        # Contour(frame_idx=None, geometry=contour, confidence=score)
                         Contour(frame=self, geometry=contour_geom, confidence=score)
                     )
 
@@ -119,9 +111,7 @@ class Frame:
 
         for contour in self.contours:
             contour.evaluate_fighter_likelihood()
-            # print(contour.score)
-        # Sort contours by combined likelihood and keep only the top two
-        self.contours.sort(key=lambda x: x.score, reverse=True)
-        top_contours = self.contours[:2]
+            if contour.pct_skin > 0.1 and contour.pct_bbox > 0.1:
+                top_contours.append(contour)
 
         return top_contours
