@@ -3,7 +3,7 @@ import numpy as np
 
 
 class Bbox:
-    def __init__(self, xywh, frame, is_interpolated=False):
+    def __init__(self, xywh, frame, confidence, is_interpolated=False):
         self.xywh = xywh
         self.prev = None
         self.next = None
@@ -11,7 +11,7 @@ class Bbox:
         self.is_interpolated = is_interpolated
         self.vertices = self.compute_vertices()
         self.centroid = self.compute_centroid()
-        self.confidence = None
+        self.confidence = confidence
         self.hash = self.compute_hash()
 
     def compute_hash(self):
@@ -63,34 +63,6 @@ class Bbox:
         ) / 2
 
         return avg_distance / avg_diagonal
-
-    @staticmethod
-    def interpolate_bbox(start_bbox, end_bbox, frames):
-        interpolated_bboxes = []
-        start_frame = start_bbox.frame.idx
-        end_frame = end_bbox.frame.idx
-
-        steps = end_frame - start_frame - 1
-        if steps <= 0:
-            return interpolated_bboxes
-
-        for i in range(1, steps + 1):
-            ratio = i / (steps + 1)
-            interpolated_bbox = (
-                start_bbox.xywh[0] * (1 - ratio) + end_bbox.xywh[0] * ratio,
-                start_bbox.xywh[1] * (1 - ratio) + end_bbox.xywh[1] * ratio,
-                start_bbox.xywh[2] * (1 - ratio) + end_bbox.xywh[2] * ratio,
-                start_bbox.xywh[3] * (1 - ratio) + end_bbox.xywh[3] * ratio,
-            )
-            interpolated_bboxes.append(
-                Bbox(
-                    xywh=interpolated_bbox,
-                    frame=frames[start_frame + i],
-                    is_interpolated=True,
-                )
-            )
-
-        return interpolated_bboxes
 
     def expand_bbox(self, expand_ratio):
         x, y, w, h = self.xywh

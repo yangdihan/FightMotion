@@ -130,27 +130,53 @@ class VideoStream:
 
         return
 
-    def interpolate_missing_bboxes(self):
+    def interpolate_bbox(self, start_bbox, end_bbox):
+        interpolated_bboxes = []
+        start_frame = start_bbox.frame.idx
+        end_frame = end_bbox.frame.idx
 
+        steps = end_frame - start_frame - 1
+        if steps <= 0:
+            return interpolated_bboxes
+
+        for i in range(1, steps + 1):
+            ratio = i / (steps + 1)
+            interpolated_bbox = (
+                start_bbox.xywh[0] * (1 - ratio) + end_bbox.xywh[0] * ratio,
+                start_bbox.xywh[1] * (1 - ratio) + end_bbox.xywh[1] * ratio,
+                start_bbox.xywh[2] * (1 - ratio) + end_bbox.xywh[2] * ratio,
+                start_bbox.xywh[3] * (1 - ratio) + end_bbox.xywh[3] * ratio,
+            )
+            confidence = (
+                start_bbox.confidence * (1 - ratio) + end_bbox.confidence * ratio,
+            )
+            interpolated_bboxes.append(
+                Bbox(
+                    xywh=interpolated_bbox,
+                    frame=self.frames[start_frame + i],
+                    confidence=confidence,
+                    is_interpolated=True,
+                )
+            )
+
+        return interpolated_bboxes
+
+    def fill_connection(self):
         for frame in self.frames:
             for bbox in frame.bboxes:
                 if bbox.next and bbox.next.frame.idx != frame.idx + 1:
-                    interpolated_bboxes = Bbox.interpolate_bbox(
-                        bbox, bbox.next, self.frames
-                    )
+                    interpolated_bboxes = self.interpolate_bbox(bbox, bbox.next)
                     for ib in interpolated_bboxes:
                         self.frames[ib.frame.idx].bboxes.append(ib)
 
                 if bbox.prev and bbox.prev.frame.idx != frame.idx - 1:
-                    interpolated_bboxes = Bbox.interpolate_bbox(
-                        bbox.prev, bbox, self.frames
-                    )
+                    interpolated_bboxes = self.interpolate_bbox(bbox.prev, bbox)
                     for ib in interpolated_bboxes:
                         self.frames[ib.frame.idx].bboxes.append(ib)
 
         return
 
-    def mask_bboxes(self):
+    def generate_person_bboxes(self):
         min_area = MIN_AREA_RATIO * self.frame_width * self.frame_height
 
         print(f"Detecting human bbox by YOLO...")
@@ -159,30 +185,29 @@ class VideoStream:
 
         self.direct_connection(BBOX_DIST_THRESHOLD)
         self.infer_connection(BBOX_DIST_THRESHOLD)
-        self.interpolate_missing_bboxes()
+        self.fill_connection()
 
         print(f"Masking bbox at each frame...")
         for frame in self.frames:
-            frame.mask_bbox = frame.mask_frame_with_bbox(frame.bboxes)
-            frame.pixels = frame.crop_frame_with_mask(frame.mask_bbox)
+            mask_bbox = frame.mask_frame_with_bbox(frame.bboxes)
+            frame.pixels = frame.crop_frame_with_mask(mask_bbox)
 
         return
 
-    def mask_contours(self):
+    def generate_fighter_contour(self):
         print(f"Detecting fighter contour by RCNN...")
 
         previous_non_blank_pixel_count = None
         top_contours_last = []
 
+        print(f"Masking contour at each frame...")
         for frame in tqdm(self.frames):
 
             contours_top2 = frame.extract_fighter_contour()
 
             mask_contour2 = frame.mask_frame_with_contours(contours_top2)
 
-            non_blank_pixel_count = cv2.countNonZero(
-                cv2.cvtColor(mask_contour2, cv2.COLOR_BGR2GRAY)
-            )
+            non_blank_pixel_count = cv2.countNonZero(mask_contour2)
 
             if Contour.significant_drop(
                 previous_non_blank_pixel_count,
@@ -196,7 +221,7 @@ class VideoStream:
 
             frame.contours = contours_top2
             frame.mask_contour = mask_contour2
-            frame.pixels_fighters = frame.crop_frame_with_mask()
+            frame.pixels = frame.crop_frame_with_mask(mask_contour2)
 
             previous_non_blank_pixel_count = non_blank_pixel_count
             top_contours_last = contours_top2
@@ -207,9 +232,8 @@ class VideoStream:
 def run_extract_fighters(input_video_path, output_folder):
     video_stream = VideoStream(input_video_path)
 
-    video_stream.mask_bboxes()
-
-    # video_stream.mask_contours()
+    video_stream.generate_person_bboxes()
+    video_stream.generate_fighter_contour()
 
     video_stream.cap.release()
     video_stream.output(output_folder)
