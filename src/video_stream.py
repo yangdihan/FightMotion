@@ -201,7 +201,8 @@ class VideoStream:
         return interpolated_items
 
     def fill_connection(self, items):
-        for frame in self.frames:
+        print("Filling missing segmentations...")
+        for frame in tqdm(self.frames):
             item_list = getattr(frame, items)
             for item in item_list:
                 if item.next and item.next.frame.idx != frame.idx + 1:
@@ -252,6 +253,46 @@ class VideoStream:
 
         return
 
+    def get_longest_contour_linked_list(self):
+        longest_list = []
+        visited_hashes = set()
+
+        print("Finding the longest Contour linked-list...")
+        for frame in tqdm(self.frames):
+            for contour in frame.contours:
+                if contour.hash not in visited_hashes:
+                    current_list = []
+                    current = contour
+                    while current and current.hash not in visited_hashes:
+                        current_list.append(current)
+                        visited_hashes.add(current.hash)
+                        current = current.next
+
+                    if len(current_list) > len(longest_list):
+                        longest_list = current_list
+
+        return longest_list
+
+    def export_longest_contour_video(self, output_path):
+        longest_list = self.get_longest_contour_linked_list()
+
+        output_video_path = os.path.join(output_path, "longest_contour_video.mp4")
+        out = cv2.VideoWriter(
+            output_video_path,
+            cv2.VideoWriter_fourcc(*"mp4v"),
+            self.fps,
+            (self.frame_width, self.frame_height),
+        )
+
+        for contour in longest_list:
+            frame = contour.frame
+            mask = frame.mask_frame_with_contours([contour])
+            cropped_frame = frame.crop_frame_with_mask(mask)
+            out.write(cropped_frame)
+
+        out.release()
+        print(f"Longest contour video saved to {output_video_path}")
+
 
 def run_extract_fighters(input_video_path, output_folder):
     video_stream = VideoStream(input_video_path)
@@ -260,6 +301,7 @@ def run_extract_fighters(input_video_path, output_folder):
     video_stream.generate_fighter_contour()
 
     video_stream.cap.release()
-    video_stream.output(output_folder)
+    # video_stream.output(output_folder)
+    video_stream.export_longest_contour_video(output_folder)
     cv2.destroyAllWindows()
     return
