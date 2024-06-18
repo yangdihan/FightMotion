@@ -6,12 +6,11 @@ import torch
 import cv2
 
 from constants import (
-    DEVICE,
-    MASK_EXPAND_RATIO,
     YOLO_THRESHOLD,
+    RCNN_THRESHOLD,
     MIN_AREA_RATIO,
     BBOX_DIST_THRESHOLD,
-    RCNN_THRESHOLD,
+    SKIN_PCT_THRESHOLD,
     SIGNIFICANT_DROP_RATIO,
 )
 from frame import Frame
@@ -53,7 +52,7 @@ class VideoStream:
         if not os.path.exists(frame_output_folder):
             os.makedirs(frame_output_folder)
 
-        output_video_path = os.path.join(output_folder, "output_video.mp4")
+        output_video_path = os.path.join(output_folder, "output_video_mark.mp4")
         out = cv2.VideoWriter(
             output_video_path,
             cv2.VideoWriter_fourcc(*"mp4v"),
@@ -62,117 +61,158 @@ class VideoStream:
         )
 
         for frame in tqdm(self.frames):
-            out.write(frame.pixels)
+            marked_frame = frame.pixels.copy()
+
+            # for contour in frame.contours:
+            #     x, y, w, h = map(int, contour.bbox_upper)
+            #     cv2.rectangle(marked_frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+            #     cv2.putText(
+            #         marked_frame,
+            #         f"Skin: {contour.pct_skin:.2f}",
+            #         (x, y - 10),
+            #         cv2.FONT_HERSHEY_SIMPLEX,
+            #         0.5,
+            #         (255, 0, 0),
+            #         2,
+            #     )
+
+            #     x, y, w, h = map(int, contour.bbox_lower)
+            #     cv2.rectangle(marked_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            #     cv2.putText(
+            #         marked_frame,
+            #         f"Trunk: {contour.trunk_color}",
+            #         (x, y - 10),
+            #         cv2.FONT_HERSHEY_SIMPLEX,
+            #         0.5,
+            #         (0, 255, 0),
+            #         2,
+            #     )
+
+            #     # Draw contour around the trunk
+            #     trunk_contours, _ = cv2.findContours(contour.trunk_color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            #     cv2.drawContours(marked_frame, trunk_contours, -1, (0, 255, 255), 2)
+
+            out.write(marked_frame)
             frame_output_path = os.path.join(frame_output_folder, f"{frame.idx}.jpg")
-            cv2.imwrite(frame_output_path, frame.pixels)
+            cv2.imwrite(frame_output_path, marked_frame)
 
         out.release()
 
-    def direct_connection(self, bbox_dist_threshold):
-
+    def direct_connection(self, items, bbox_dist_threshold):
         for frame_idx in range(self.frame_count - 1):
+            current_items = getattr(self.frames[frame_idx], items)
+            next_items = getattr(self.frames[frame_idx + 1], items)
 
-            current_bboxes = self.frames[frame_idx].bboxes
-            next_bboxes = self.frames[frame_idx + 1].bboxes
-
-            for cb in current_bboxes:
+            for ci in current_items:
                 min_dist = float("inf")
                 best_match = None
-                for nb in next_bboxes:
-                    dist = Bbox.bbox_dist(cb, nb)
+                for ni in next_items:
+                    dist = Bbox.bbox_dist(ci, ni)
                     if dist < min_dist and dist <= bbox_dist_threshold:
                         min_dist = dist
-                        best_match = nb
+                        best_match = ni
 
                 if best_match:
-                    cb.next = best_match
-                    best_match.prev = cb
+                    ci.next = best_match
+                    best_match.prev = ci
         return
 
-    def infer_connection(self, bbox_dist_threshold):
-        # Forward iteration: find the next linked bbox for bboxes without next
+    def infer_connection(self, items, bbox_dist_threshold):
         for frame_idx in range(self.frame_count):
-            current_bboxes = self.frames[frame_idx].bboxes
-            for cb in current_bboxes:
-                if cb.next is None:
+            current_items = getattr(self.frames[frame_idx], items)
+            for ci in current_items:
+                if ci.next is None:
                     for future_frame_idx in range(frame_idx + 1, self.frame_count):
-                        future_bboxes = self.frames[future_frame_idx].bboxes
-                        for fb in future_bboxes:
-                            if fb.prev is None:
+                        future_items = getattr(self.frames[future_frame_idx], items)
+                        for fi in future_items:
+                            if fi.prev is None:
                                 dist_threshold = (
                                     future_frame_idx - frame_idx
                                 ) * bbox_dist_threshold
-                                if Bbox.bbox_dist(cb, fb) <= dist_threshold:
-                                    cb.next = fb
-                                    fb.prev = cb
+                                if Bbox.bbox_dist(ci, fi) <= dist_threshold:
+                                    ci.next = fi
+                                    fi.prev = ci
                                     break
-                        if cb.next is not None:
+                        if ci.next is not None:
                             break
 
-        # Backward iteration: find the previous linked bbox for bboxes without prev
         for frame_idx in range(self.frame_count - 1, 0, -1):
-            current_bboxes = self.frames[frame_idx].bboxes
-            for cb in current_bboxes:
-                if cb.prev is None:
+            current_items = getattr(self.frames[frame_idx], items)
+            for ci in current_items:
+                if ci.prev is None:
                     for past_frame_idx in range(frame_idx - 1, -1, -1):
-                        past_bboxes = self.frames[past_frame_idx].bboxes
-                        for pb in past_bboxes:
-                            if pb.next is None:
+                        past_items = getattr(self.frames[past_frame_idx], items)
+                        for pi in past_items:
+                            if pi.next is None:
                                 dist_threshold = (
                                     frame_idx - past_frame_idx
                                 ) * bbox_dist_threshold
-                                if Bbox.bbox_dist(cb, pb) <= dist_threshold:
-                                    cb.prev = pb
-                                    pb.next = cb
+                                if Bbox.bbox_dist(ci, pi) <= dist_threshold:
+                                    ci.prev = pi
+                                    pi.next = ci
                                     break
-                        if cb.prev is not None:
+                        if ci.prev is not None:
                             break
 
         return
 
-    def interpolate_bbox(self, start_bbox, end_bbox):
-        interpolated_bboxes = []
-        start_frame = start_bbox.frame.idx
-        end_frame = end_bbox.frame.idx
+    def interpolate_bbox(self, start_item, end_item):
+        interpolated_items = []
+        start_frame = start_item.frame.idx
+        end_frame = end_item.frame.idx
 
         steps = end_frame - start_frame - 1
         if steps <= 0:
-            return interpolated_bboxes
+            return interpolated_items
 
         for i in range(1, steps + 1):
             ratio = i / (steps + 1)
-            interpolated_bbox = (
-                start_bbox.xywh[0] * (1 - ratio) + end_bbox.xywh[0] * ratio,
-                start_bbox.xywh[1] * (1 - ratio) + end_bbox.xywh[1] * ratio,
-                start_bbox.xywh[2] * (1 - ratio) + end_bbox.xywh[2] * ratio,
-                start_bbox.xywh[3] * (1 - ratio) + end_bbox.xywh[3] * ratio,
+            interpolated_xywh = (
+                start_item.xywh[0] * (1 - ratio) + end_item.xywh[0] * ratio,
+                start_item.xywh[1] * (1 - ratio) + end_item.xywh[1] * ratio,
+                start_item.xywh[2] * (1 - ratio) + end_item.xywh[2] * ratio,
+                start_item.xywh[3] * (1 - ratio) + end_item.xywh[3] * ratio,
             )
             confidence = (
-                start_bbox.confidence * (1 - ratio) + end_bbox.confidence * ratio,
+                start_item.confidence * (1 - ratio) + end_item.confidence * ratio,
             )
-            interpolated_bboxes.append(
-                Bbox(
-                    xywh=interpolated_bbox,
-                    frame=self.frames[start_frame + i],
-                    confidence=confidence,
-                    is_interpolated=True,
+
+            # do not use isinstance when subclass is involved
+            if type(start_item) == Bbox:
+                interpolated_items.append(
+                    Bbox(
+                        xywh=interpolated_xywh,
+                        confidence=confidence,
+                        frame=self.frames[start_frame + i],
+                        is_interpolated=True,
+                    )
                 )
-            )
+            elif type(start_item) == Contour:
+                geometry = Contour.compute_geometry_from_xywh(interpolated_xywh)
+                interpolated_items.append(
+                    Contour(
+                        geometry=geometry,
+                        confidence=confidence,
+                        frame=self.frames[start_frame + i],
+                        is_interpolated=True,
+                    )
+                )
 
-        return interpolated_bboxes
+        return interpolated_items
 
-    def fill_connection(self):
+    def fill_connection(self, items):
         for frame in self.frames:
-            for bbox in frame.bboxes:
-                if bbox.next and bbox.next.frame.idx != frame.idx + 1:
-                    interpolated_bboxes = self.interpolate_bbox(bbox, bbox.next)
-                    for ib in interpolated_bboxes:
-                        self.frames[ib.frame.idx].bboxes.append(ib)
+            item_list = getattr(frame, items)
+            for item in item_list:
+                if item.next and item.next.frame.idx != frame.idx + 1:
+                    interpolated_items = self.interpolate_bbox(item, item.next)
+                    for ii in interpolated_items:
+                        getattr(self.frames[ii.frame.idx], items).append(ii)
 
-                if bbox.prev and bbox.prev.frame.idx != frame.idx - 1:
-                    interpolated_bboxes = self.interpolate_bbox(bbox.prev, bbox)
-                    for ib in interpolated_bboxes:
-                        self.frames[ib.frame.idx].bboxes.append(ib)
+                if item.prev and item.prev.frame.idx != frame.idx - 1:
+                    interpolated_items = self.interpolate_bbox(item.prev, item)
+                    for ii in interpolated_items:
+                        getattr(self.frames[ii.frame.idx], items).append(ii)
 
         return
 
@@ -181,11 +221,11 @@ class VideoStream:
 
         print(f"Detecting human bbox by YOLO...")
         for frame in tqdm(self.frames):
-            frame.extract_person_yolo(min_area)
+            frame.extract_fighter_yolo(YOLO_THRESHOLD, min_area)
 
-        self.direct_connection(BBOX_DIST_THRESHOLD)
-        self.infer_connection(BBOX_DIST_THRESHOLD)
-        self.fill_connection()
+        self.direct_connection("bboxes", BBOX_DIST_THRESHOLD)
+        self.infer_connection("bboxes", BBOX_DIST_THRESHOLD)
+        self.fill_connection("bboxes")
 
         print(f"Masking bbox at each frame...")
         for frame in self.frames:
@@ -195,36 +235,20 @@ class VideoStream:
         return
 
     def generate_fighter_contour(self):
-        print(f"Detecting fighter contour by RCNN...")
+        min_area = MIN_AREA_RATIO * self.frame_width * self.frame_height
 
-        previous_non_blank_pixel_count = None
-        top_contours_last = []
+        print(f"Detecting fighter contour by RCNN...")
+        for frame in tqdm(self.frames):
+            frame.extract_fighter_rcnn(RCNN_THRESHOLD, min_area, SKIN_PCT_THRESHOLD)
+
+        self.direct_connection("contours", BBOX_DIST_THRESHOLD)
+        self.infer_connection("contours", BBOX_DIST_THRESHOLD)
+        self.fill_connection("contours")
 
         print(f"Masking contour at each frame...")
         for frame in tqdm(self.frames):
-
-            contours_top2 = frame.extract_fighter_contour()
-
-            mask_contour2 = frame.mask_frame_with_contours(contours_top2)
-
-            non_blank_pixel_count = cv2.countNonZero(mask_contour2)
-
-            if Contour.significant_drop(
-                previous_non_blank_pixel_count,
-                non_blank_pixel_count,
-                SIGNIFICANT_DROP_RATIO,
-            ):
-                contours_top2 = Contour.infer_missing_contours(
-                    top_contours_last, contours_top2, BBOX_DIST_THRESHOLD
-                )
-                mask_contour2 = frame.mask_frame_with_contours(contours_top2)
-
-            frame.contours = contours_top2
-            frame.mask_contour = mask_contour2
-            frame.pixels = frame.crop_frame_with_mask(mask_contour2)
-
-            previous_non_blank_pixel_count = non_blank_pixel_count
-            top_contours_last = contours_top2
+            mask_contour = frame.mask_frame_with_contours(frame.contours)
+            frame.pixels = frame.crop_frame_with_mask(mask_contour)
 
         return
 

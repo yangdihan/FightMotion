@@ -7,10 +7,12 @@ from bbox import Bbox
 
 
 class Contour(Bbox):
-    def __init__(self, frame, geometry, confidence):
+    def __init__(self, geometry, confidence, frame, is_interpolated=False):
         self.geometry = geometry
 
-        super().__init__(cv2.boundingRect(self.geometry), frame, confidence)
+        super().__init__(
+            cv2.boundingRect(self.geometry), confidence, frame, is_interpolated
+        )
 
         self.skin_pct = None
         self.trunk_color = None
@@ -23,35 +25,66 @@ class Contour(Bbox):
 
         x, y, w, h = self.xywh
         # Mask out the lower_body
-        self.mask_upper[y + int(h * 0.618) :] = 0
+        self.mask_upper[int(y + h * 0.618) :] = 0
         # Mask out the upper body
-        self.mask_lower[: y + int(h * 0.618)] = 0
+        self.mask_lower[: int(y + (1 - 0.618) * h)] = 0
 
         self.pixel_upper = self.frame.crop_frame_with_mask(self.mask_upper)
         self.pixel_lower = self.frame.crop_frame_with_mask(self.mask_lower)
 
-    @staticmethod
-    def significant_drop(prev_count, curr_count, drop_ratio):
-        return prev_count is not None and curr_count < prev_count * drop_ratio
+    @property
+    def bbox_upper(self):
+        x, y, w, h = self.xywh
+        return x, y, w, int(h * 0.618)
+
+    @property
+    def bbox_lower(self):
+        x, y, w, h = self.xywh
+        return x, int(y + (1 - 0.618) * h), w, int(h * 0.618)
 
     @staticmethod
-    def infer_missing_contours(contours_last, contours_this, bbox_dist_threshold):
+    def compute_geometry_from_xywh(xywh):
+        x, y, w, h = map(int, xywh)
+        geometry = np.array(
+            [[[x, y]], [[x + w, y]], [[x + w, y + h]], [[x, y + h]]], dtype=np.int32
+        )
+        return geometry
 
-        paired_last = [False] * len(contours_last)
-        paired_this = [False] * len(contours_this)
+    # @property
+    # def mask_upper(self):
+    #     mask = np.zeros_like(self.frame.pixels)
+    #     x, y, w, h = self.bbox_upper
+    #     mask[y : y + h, x : x + w] = self.frame.pixels[y : y + h, x : x + w]
+    #     return mask
 
-        for i, bbox_this in enumerate(contours_this):
-            for j, bbox_last in enumerate(contours_last):
-                if Bbox.bbox_dist(bbox_this, bbox_last) <= bbox_dist_threshold:
-                    paired_this[i] = True
-                    paired_last[j] = True
+    # @property
+    # def mask_lower(self):
+    #     mask = np.zeros_like(self.frame.pixels)
+    #     x, y, w, h = self.bbox_lower
+    #     mask[y : y + h, x : x + w] = self.frame.pixels[y : y + h, x : x + w]
+    #     return mask
+    # @staticmethod
+    # def significant_drop(prev_count, curr_count, drop_ratio):
+    #     return prev_count is not None and curr_count < prev_count * drop_ratio
 
-        # Add unpaired contours from the last frame to the current frame
-        for i, paired in enumerate(paired_last):
-            if not paired:
-                contours_this.append(contours_last[i])
+    # @staticmethod
+    # def infer_missing_contours(contours_last, contours_this, bbox_dist_threshold):
 
-        return contours_this
+    #     paired_last = [False] * len(contours_last)
+    #     paired_this = [False] * len(contours_this)
+
+    #     for i, bbox_this in enumerate(contours_this):
+    #         for j, bbox_last in enumerate(contours_last):
+    #             if Bbox.bbox_dist(bbox_this, bbox_last) <= bbox_dist_threshold:
+    #                 paired_this[i] = True
+    #                 paired_last[j] = True
+
+    #     # Add unpaired contours from the last frame to the current frame
+    #     for i, paired in enumerate(paired_last):
+    #         if not paired:
+    #             contours_this.append(contours_last[i])
+
+    #     return contours_this
 
     def estimate_skin_exposure(self):
         # Convert to HSV color space
@@ -65,28 +98,82 @@ class Contour(Bbox):
         # Calculate the percentage of skin area
         skin_area = cv2.countNonZero(skin_mask)
         total_area = cv2.countNonZero(self.mask)
-        skin_percentage = skin_area / total_area if total_area > 0 else 0
+        self.pct_skin = skin_area / total_area if total_area > 0 else 0
 
-        return skin_percentage
+        return
 
-    # @staticmethod
     def detect_trunk_color(self):
+        # Convert to HSV color space
+        hsv = cv2.cvtColor(self.pixel_lower, cv2.COLOR_BGR2HSV)
+        lower_skin = np.array([0, 20, 70], dtype=np.uint8)
+        upper_skin = np.array([20, 255, 255], dtype=np.uint8)
 
-        trunk_color = cv2.mean(self.pixel_lower, mask=self.lower_skin)[:3]
-
-        return trunk_color
-
-    # @staticmethod
-    def evaluate_fighter_likelihood(self):
-        # Calculate skin exposure in the upper 60% of the contour
-        self.pct_skin = self.estimate_skin_exposure()
-
-        x, y, w, h = self.xywh
-        bbox_area = w * h
-
-        # Normalize the bounding box area (you may need to adjust this normalization factor based on your video resolution)
-        self.pct_bbox = bbox_area / (
-            self.frame.pixels.shape[0] * self.frame.pixels.shape[1]
+        # Remove skin color pixels
+        skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
+        non_skin_mask = cv2.bitwise_not(skin_mask)
+        non_skin_pixels = cv2.bitwise_and(
+            self.pixel_lower, self.pixel_lower, mask=non_skin_mask
         )
+
+        # Downsample the image to speed up processing
+        downsample_factor = 8
+        trunk_pixels_small = cv2.resize(
+            non_skin_pixels,
+            (
+                non_skin_pixels.shape[1] // downsample_factor,
+                non_skin_pixels.shape[0] // downsample_factor,
+            ),
+            interpolation=cv2.INTER_NEAREST,
+        )
+        non_skin_mask_small = cv2.resize(
+            non_skin_mask,
+            (
+                non_skin_mask.shape[1] // downsample_factor,
+                non_skin_mask.shape[0] // downsample_factor,
+            ),
+            interpolation=cv2.INTER_NEAREST,
+        )
+
+        # Convert to RGB for color detection
+        trunk_pixels_rgb = cv2.cvtColor(trunk_pixels_small, cv2.COLOR_BGR2RGB)
+        trunk_pixels_rgb = trunk_pixels_rgb[non_skin_mask_small > 0].reshape((-1, 3))
+
+        # Define color boundaries in RGB
+        color_boundaries = {
+            "Red": ([200, 0, 0], [255, 50, 50]),
+            "Green": ([0, 200, 0], [50, 255, 50]),
+            "Blue": ([0, 0, 200], [50, 50, 255]),
+            "Yellow": ([200, 200, 0], [255, 255, 50]),
+            "White": ([200, 200, 200], [255, 255, 255]),
+            "Black": ([0, 0, 0], [50, 50, 50]),
+        }
+
+        # Count the number of pixels within each color boundary
+        color_counts = {color: 0 for color in color_boundaries.keys()}
+        color_masks = {
+            color: np.zeros_like(non_skin_mask) for color in color_boundaries.keys()
+        }
+
+        for pixel in tqdm(trunk_pixels_rgb):
+            for color, (lower, upper) in color_boundaries.items():
+                if all(lower[j] <= pixel[j] <= upper[j] for j in range(3)):
+                    color_counts[color] += 1
+
+        # Determine the most dominant color
+        dominant_color = max(color_counts, key=color_counts.get)
+        self.trunk_color = dominant_color
+
+        # Generate trunk color mask
+        trunk_mask_full_size = np.zeros_like(non_skin_mask)
+        for color, (lower, upper) in color_boundaries.items():
+            if color == dominant_color:
+                trunk_mask_full_size = cv2.inRange(
+                    cv2.cvtColor(self.pixel_lower, cv2.COLOR_BGR2RGB),
+                    np.array(lower),
+                    np.array(upper),
+                )
+                break
+
+        self.trunk_color_mask = trunk_mask_full_size
 
         return

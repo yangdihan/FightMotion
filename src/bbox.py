@@ -3,28 +3,24 @@ import numpy as np
 
 
 class Bbox:
-    def __init__(self, xywh, frame, confidence, is_interpolated=False):
+    def __init__(self, xywh, confidence, frame, is_interpolated=False):
         self.xywh = xywh
+        x, y, w, h = self.xywh
+        self.area = w * h
+        self.vertices = np.array([[x, y], [x + w, y], [x, y + h], [x + w, y + h]])
+        self.centroid = np.array([x + w / 2, y + h / 2])
+
         self.prev = None
         self.next = None
         self.frame = frame
         self.is_interpolated = is_interpolated
-        self.vertices = self.compute_vertices()
-        self.centroid = self.compute_centroid()
+
         self.confidence = confidence
         self.hash = self.compute_hash()
 
     def compute_hash(self):
         bbox_str = f"{self.xywh}-{self.frame.idx}"
         return hashlib.md5(bbox_str.encode()).hexdigest()
-
-    def compute_vertices(self):
-        x, y, w, h = self.xywh
-        return np.array([[x, y], [x + w, y], [x, y + h], [x + w, y + h]])
-
-    def compute_centroid(self):
-        x, y, w, h = self.xywh
-        return np.array([x + w / 2, y + h / 2])
 
     @staticmethod
     def bbox_dist(bbox1, bbox2):
