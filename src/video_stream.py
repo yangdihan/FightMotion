@@ -1,13 +1,15 @@
 import os
+from collections import defaultdict
 import json
 from tqdm import tqdm
 import numpy as np
 import torch
 import cv2
 
+
 from constants import (
-    YOLO_THRESHOLD,
-    RCNN_THRESHOLD,
+    # YOLO_THRESHOLD,
+    # RCNN_THRESHOLD,
     MIN_AREA_RATIO,
     BBOX_DIST_THRESHOLD,
     SKIN_PCT_THRESHOLD,
@@ -16,6 +18,7 @@ from constants import (
 from frame import Frame
 from bbox import Bbox
 from contour import Contour
+from pose import Pose
 
 
 class VideoStream:
@@ -43,18 +46,10 @@ class VideoStream:
         ret, frame = self.cap.read()
         return ret, frame
 
-    def output(self, output_folder):
-        print(f"Exporting frames...")
-        if not os.path.exists(output_folder):
-            os.makedirs(output_folder)
+    def output(self, output_folder, jpg=True):
 
-        frame_output_folder = os.path.join(output_folder, "frames")
-        if not os.path.exists(frame_output_folder):
-            os.makedirs(frame_output_folder)
-
-        output_video_path = os.path.join(output_folder, "output_video_mark.mp4")
         out = cv2.VideoWriter(
-            output_video_path,
+            os.path.join(output_folder, "output_video.mp4"),
             cv2.VideoWriter_fourcc(*"mp4v"),
             self.fps,
             (self.frame_width, self.frame_height),
@@ -62,41 +57,31 @@ class VideoStream:
 
         for frame in tqdm(self.frames):
             marked_frame = frame.pixels.copy()
-
-            # for contour in frame.contours:
-            #     x, y, w, h = map(int, contour.bbox_upper)
-            #     cv2.rectangle(marked_frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-            #     cv2.putText(
-            #         marked_frame,
-            #         f"Skin: {contour.pct_skin:.2f}",
-            #         (x, y - 10),
-            #         cv2.FONT_HERSHEY_SIMPLEX,
-            #         0.5,
-            #         (255, 0, 0),
-            #         2,
-            #     )
-
-            #     x, y, w, h = map(int, contour.bbox_lower)
-            #     cv2.rectangle(marked_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            #     cv2.putText(
-            #         marked_frame,
-            #         f"Trunk: {contour.trunk_color}",
-            #         (x, y - 10),
-            #         cv2.FONT_HERSHEY_SIMPLEX,
-            #         0.5,
-            #         (0, 255, 0),
-            #         2,
-            #     )
-
-            #     # Draw contour around the trunk
-            #     trunk_contours, _ = cv2.findContours(contour.trunk_color_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-            #     cv2.drawContours(marked_frame, trunk_contours, -1, (0, 255, 255), 2)
+            for pose in frame.poses:
+                marked_frame = pose.plot_skeleton_kpts(marked_frame, 3)
+                text = f"tid:{pose.track_id} with seq : {pose.seq_length}"
+                x, y = int(pose.keypoints[-1, 0, 0]), int(pose.keypoints[-1, 0, 1])
+                cv2.putText(
+                    marked_frame,
+                    text,
+                    (x, y + 15),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.5,
+                    (0, 0, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
 
             out.write(marked_frame)
-            frame_output_path = os.path.join(frame_output_folder, f"{frame.idx}.jpg")
-            cv2.imwrite(frame_output_path, marked_frame)
+
+            if jpg:
+                frame_output_path = os.path.join(
+                    output_folder, "frames", f"{frame.idx}.jpg"
+                )
+                cv2.imwrite(frame_output_path, marked_frame)
 
         out.release()
+        return
 
     def direct_connection(self, items, bbox_dist_threshold):
         for frame_idx in range(self.frame_count - 1):
@@ -217,12 +202,12 @@ class VideoStream:
 
         return
 
-    def generate_person_bboxes(self):
+    def generate_fighter_bboxes(self):
         min_area = MIN_AREA_RATIO * self.frame_width * self.frame_height
 
         print(f"Detecting human bbox by YOLO...")
         for frame in tqdm(self.frames):
-            frame.extract_fighter_yolo(YOLO_THRESHOLD, min_area)
+            frame.extract_fighter_yolo(min_area)
 
         self.direct_connection("bboxes", BBOX_DIST_THRESHOLD)
         self.infer_connection("bboxes", BBOX_DIST_THRESHOLD)
@@ -240,7 +225,7 @@ class VideoStream:
 
         print(f"Detecting fighter contour by RCNN...")
         for frame in tqdm(self.frames):
-            frame.extract_fighter_rcnn(RCNN_THRESHOLD, min_area, SKIN_PCT_THRESHOLD)
+            frame.extract_fighter_rcnn(min_area, SKIN_PCT_THRESHOLD)
 
         self.direct_connection("contours", BBOX_DIST_THRESHOLD)
         self.infer_connection("contours", BBOX_DIST_THRESHOLD)
@@ -253,55 +238,27 @@ class VideoStream:
 
         return
 
-    def get_longest_contour_linked_list(self):
-        longest_list = []
-        visited_hashes = set()
+    def generate_fighter_poses(self):
+        track_history = defaultdict(lambda: [])
+        drop_counting = defaultdict(lambda: 0)
 
-        print("Finding the longest Contour linked-list...")
+        print("Tracking Poses...")
         for frame in tqdm(self.frames):
-            for contour in frame.contours:
-                if contour.hash not in visited_hashes:
-                    current_list = []
-                    current = contour
-                    while current and current.hash not in visited_hashes:
-                        current_list.append(current)
-                        visited_hashes.add(current.hash)
-                        current = current.next
+            track_history, drop_counting = frame.extract_fighter_pose(
+                track_history, drop_counting
+            )
 
-                    if len(current_list) > len(longest_list):
-                        longest_list = current_list
-
-        return longest_list
-
-    def export_longest_contour_video(self, output_path):
-        longest_list = self.get_longest_contour_linked_list()
-
-        output_video_path = os.path.join(output_path, "longest_contour_video.mp4")
-        out = cv2.VideoWriter(
-            output_video_path,
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            self.fps,
-            (self.frame_width, self.frame_height),
-        )
-
-        for contour in longest_list:
-            frame = contour.frame
-            mask = frame.mask_frame_with_contours([contour])
-            cropped_frame = frame.crop_frame_with_mask(mask)
-            out.write(cropped_frame)
-
-        out.release()
-        print(f"Longest contour video saved to {output_video_path}")
+        return
 
 
 def run_extract_fighters(input_video_path, output_folder):
     video_stream = VideoStream(input_video_path)
 
-    video_stream.generate_person_bboxes()
+    video_stream.generate_fighter_bboxes()
     video_stream.generate_fighter_contour()
+    video_stream.generate_fighter_poses()
 
     video_stream.cap.release()
-    # video_stream.output(output_folder)
-    video_stream.export_longest_contour_video(output_folder)
+    video_stream.output(output_folder)
     cv2.destroyAllWindows()
     return

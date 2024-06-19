@@ -4,14 +4,17 @@ import cv2
 
 from constants import (
     MASK_EXPAND_RATIO,
-    YOLO_MODEL,
-    # YOLO_THRESHOLD,
+    YOLO_BOX_MODEL,
+    YOLO_THRESHOLD,
     MRCNN_MODEL,
     DEVICE,
-    # RCNN_THRESHOLD,
+    RCNN_THRESHOLD,
+    YOLO_POSE_MODEL,
+    POSE_TRACKER,
 )
 from bbox import Bbox
 from contour import Contour
+from pose import Pose
 
 
 class Frame:
@@ -22,6 +25,7 @@ class Frame:
 
         self.bboxes = []
         self.contours = []
+        self.poses = []
         return
 
     def mask_frame_with_bbox(self, bboxes):
@@ -49,21 +53,13 @@ class Frame:
         cropped_frame = cv2.bitwise_and(self.pixels, self.pixels, mask=mask)
         return cropped_frame
 
-    # def mark_frame_with_bbox(self, bboxes):
-
-    #     marked_frame = self.pixels.copy()
-    #     for bbox in bboxes:
-    #         x, y, w, h = map(int, bbox.xywh)
-    #         cv2.rectangle(marked_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-    #     return marked_frame
-
-    def extract_fighter_yolo(self, yolo_conf_threshold, min_area):
+    def extract_fighter_yolo(self, min_area):
         # Perform YOLO detection
         with torch.no_grad():
-            results = YOLO_MODEL(self.pixels_rgb)
+            results = YOLO_BOX_MODEL(self.pixels_rgb)
 
         for *box, conf, cls in results.xyxy[0].cpu().numpy():
-            if cls == 0 and conf >= yolo_conf_threshold:
+            if cls == 0 and conf >= YOLO_THRESHOLD:
                 # use customized heuristics to check if bbox is likely fighter
                 x1, y1, x2, y2 = map(int, box)
                 xywh = (x1, y1, x2 - x1, y2 - y1)
@@ -74,7 +70,7 @@ class Frame:
 
         return
 
-    def extract_fighter_rcnn(self, rcnn_conf_threshold, min_area, skin_pct_threshold):
+    def extract_fighter_rcnn(self, min_area, skin_pct_threshold):
         pil_img = (
             torch.tensor(self.pixels_rgb)
             .permute(2, 0, 1)
@@ -90,7 +86,7 @@ class Frame:
 
         for idx in range(len(results[0]["masks"])):
             score = results[0]["scores"][idx].item()
-            if score > rcnn_conf_threshold:
+            if score > RCNN_THRESHOLD:
 
                 mask_rcnn = results[0]["masks"][idx, 0].mul(255).byte().cpu().numpy()
                 contour_geoms, _ = cv2.findContours(
@@ -113,3 +109,38 @@ class Frame:
                         self.contours.append(contour)
 
         return
+
+    def extract_fighter_pose(self, track_history, drop_counting):
+        MAX_MISS = 5
+
+        result = YOLO_POSE_MODEL.track(
+            self.pixels, persist=True, tracker=POSE_TRACKER, verbose=False
+        )[0]
+        boxes = result.boxes.xywh.cpu()
+        keypoints = result.keypoints.data
+        track_ids = result.boxes.id
+
+        if track_ids is None:
+            track_ids = []
+        else:
+            track_ids = track_ids.int().cpu().tolist()
+
+        diff = list(set(list(set(track_history.keys()))).difference(track_ids))
+        for d in diff:
+            if drop_counting[d] > MAX_MISS:
+                del drop_counting[d]
+                del track_history[d]
+            else:
+                drop_counting[d] += 1
+
+        for box, track_id, keypoint in zip(boxes, track_ids, keypoints):
+            track = track_history[track_id]
+            track.append(keypoint.unsqueeze(0))
+
+            if len(track) > MAX_MISS:
+                track.pop(0)
+
+            pose = Pose(torch.cat(track).cpu(), track_id, self.idx)
+            self.poses.append(pose)
+
+        return track_history, drop_counting
