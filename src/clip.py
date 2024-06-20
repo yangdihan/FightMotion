@@ -39,7 +39,8 @@ class Clip:
         self.frame_count = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.frames = [None] * self.frame_count
 
-        for frame_idx in range(self.frame_count):
+        print(f"Parsing video clip... {fn_video}")
+        for frame_idx in tqdm(range(self.frame_count)):
             ret, pixels = self.read_frame(frame_idx)
             if not ret:
                 break
@@ -70,7 +71,7 @@ class Clip:
             for pose in frame.poses:
 
                 marked_frame = pose.plot_skeleton_kpts(marked_frame)
-                text = f"id:{pose.track_id} {pose.pct_skin:.2f}%"
+                text = f"id:{pose.track_id}, {int(pose.pct_skin)}%, {int(pose.pct_pants)}%"
 
                 keypoints = (
                     pose.keypoints[-1].cpu().numpy()
