@@ -11,6 +11,7 @@ from constants import (
     RCNN_THRESHOLD,
     YOLO_POSE_MODEL,
     POSE_TRACKER,
+    POSE_CONF_THRESHOLD,
 )
 from bbox import Bbox
 from contour import Contour
@@ -111,10 +112,18 @@ class Frame:
         return
 
     def extract_fighter_pose(self, track_history, drop_counting):
-        MAX_MISS = 5
+        MIN_APPEARING_FRAMES = 10
+        MAX_MISSING_FRAMES = 10
+        MIN_KEYPOINTS = 10
 
         result = YOLO_POSE_MODEL.track(
-            self.pixels, persist=True, tracker=POSE_TRACKER, verbose=False
+            self.pixels,
+            persist=True,
+            tracker=POSE_TRACKER,
+            verbose=False,
+            conf=POSE_CONF_THRESHOLD,
+            iou=0.382,
+            device="cuda",
         )[0]
         boxes = result.boxes.xywh.cpu()
         keypoints = result.keypoints.data
@@ -127,20 +136,25 @@ class Frame:
 
         diff = list(set(list(set(track_history.keys()))).difference(track_ids))
         for d in diff:
-            if drop_counting[d] > MAX_MISS:
+            if drop_counting[d] > MAX_MISSING_FRAMES:
                 del drop_counting[d]
                 del track_history[d]
             else:
                 drop_counting[d] += 1
 
         for box, track_id, keypoint in zip(boxes, track_ids, keypoints):
-            track = track_history[track_id]
-            track.append(keypoint.unsqueeze(0))
+            # Filter out keypoints with less than MIN_KEYPOINTS points
+            if keypoint.shape[0] > MIN_KEYPOINTS:
 
-            if len(track) > MAX_MISS:
-                track.pop(0)
+                track = track_history[track_id]
+                track.append(keypoint.unsqueeze(0))
 
-            pose = Pose(torch.cat(track).cpu(), track_id, self.idx)
-            self.poses.append(pose)
+                if len(track) > MAX_MISSING_FRAMES:
+                    track.pop(0)
+
+                # Only consider poses that have appeared for at least MIN_APPEARING_FRAMES frames
+                if len(track) >= MIN_APPEARING_FRAMES:
+                    pose = Pose(torch.cat(track).cpu(), track_id, self)
+                    self.poses.append(pose)
 
         return track_history, drop_counting

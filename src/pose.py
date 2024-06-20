@@ -2,16 +2,18 @@
 import numpy as np
 import cv2
 
+from constants import POSE_CONF_THRESHOLD
+
 
 class Pose:
-    def __init__(self, keypoints, track_id, frame_idx):
+    def __init__(self, keypoints, track_id, frame):
         self.keypoints = keypoints
         self.track_id = track_id
-        self.frame_idx = frame_idx
+        self.frame = frame
         self.seq_length = keypoints.shape[0]  # Number of keypoints sequences
 
-    def plot_skeleton_kpts(self, im, steps):
-        kptThres = 0.1
+    def plot_skeleton_kpts(self, im):
+
         palette = np.array(
             [
                 [255, 128, 0],
@@ -67,9 +69,6 @@ class Pose:
         ]
         radius = 5
 
-        # Print shape for debugging
-        # print(f"Keypoints shape: {self.keypoints.shape}")
-
         if self.keypoints.ndim == 3:
             keypoints_flat = self.keypoints[-1, :, :].flatten()
         elif self.keypoints.ndim == 2:
@@ -78,19 +77,17 @@ class Pose:
             print("Unexpected keypoints shape:", self.keypoints.shape)
             return im
 
-        num_kpts = len(keypoints_flat) // steps
+        num_kpts = len(keypoints_flat) // 3
 
         for kid in range(num_kpts):
             r, g, b = pose_kpt_color[kid]
-            x_coord, y_coord = (
-                keypoints_flat[steps * kid],
-                keypoints_flat[steps * kid + 1],
+            x_coord, y_coord, conf = (
+                keypoints_flat[3 * kid],
+                keypoints_flat[3 * kid + 1],
+                keypoints_flat[3 * kid + 2],
             )
-            if not (x_coord % 640 == 0 or y_coord % 640 == 0):
-                if steps == 3:
-                    conf = keypoints_flat[steps * kid + 2]
-                    if conf < kptThres:
-                        continue
+
+            if ~(x_coord <= 0 and y_coord <= 0) and conf > POSE_CONF_THRESHOLD:
                 cv2.circle(
                     im,
                     (int(x_coord), int(y_coord)),
@@ -102,21 +99,20 @@ class Pose:
         for sk_id, sk in enumerate(skeleton):
             r, g, b = pose_limb_color[sk_id]
             pos1 = (
-                int(keypoints_flat[(sk[0] - 1) * steps]),
-                int(keypoints_flat[(sk[0] - 1) * steps + 1]),
+                int(keypoints_flat[(sk[0] - 1) * 3]),
+                int(keypoints_flat[(sk[0] - 1) * 3 + 1]),
             )
+            conf1 = keypoints_flat[(sk[0] - 1) * 3 + 2]
             pos2 = (
-                int(keypoints_flat[(sk[1] - 1) * steps]),
-                int(keypoints_flat[(sk[1] - 1) * steps + 1]),
+                int(keypoints_flat[(sk[1] - 1) * 3]),
+                int(keypoints_flat[(sk[1] - 1) * 3 + 1]),
             )
-            if steps == 3:
-                conf1 = keypoints_flat[(sk[0] - 1) * steps + 2]
-                conf2 = keypoints_flat[(sk[1] - 1) * steps + 2]
-                if conf1 < kptThres or conf2 < kptThres:
-                    continue
-            if pos1[0] % 640 == 0 or pos1[1] % 640 == 0 or pos1[0] < 0 or pos1[1] < 0:
-                continue
-            if pos2[0] % 640 == 0 or pos2[1] % 640 == 0 or pos2[0] < 0 or pos2[1] < 0:
-                continue
-            cv2.line(im, pos1, pos2, (int(r), int(g), int(b)), thickness=2)
+            conf2 = keypoints_flat[(sk[1] - 1) * 3 + 2]
+
+            if (
+                (~(pos1[0] <= 0 and pos1[1] <= 0) and conf1 > POSE_CONF_THRESHOLD)
+                and ~(pos2[0] <= 0 and pos2[1] <= 0)
+                and conf2 > POSE_CONF_THRESHOLD
+            ):
+                cv2.line(im, pos1, pos2, (int(r), int(g), int(b)), thickness=2)
         return im

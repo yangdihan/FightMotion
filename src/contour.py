@@ -50,42 +50,6 @@ class Contour(Bbox):
         )
         return geometry
 
-    # @property
-    # def mask_upper(self):
-    #     mask = np.zeros_like(self.frame.pixels)
-    #     x, y, w, h = self.bbox_upper
-    #     mask[y : y + h, x : x + w] = self.frame.pixels[y : y + h, x : x + w]
-    #     return mask
-
-    # @property
-    # def mask_lower(self):
-    #     mask = np.zeros_like(self.frame.pixels)
-    #     x, y, w, h = self.bbox_lower
-    #     mask[y : y + h, x : x + w] = self.frame.pixels[y : y + h, x : x + w]
-    #     return mask
-    # @staticmethod
-    # def significant_drop(prev_count, curr_count, drop_ratio):
-    #     return prev_count is not None and curr_count < prev_count * drop_ratio
-
-    # @staticmethod
-    # def infer_missing_contours(contours_last, contours_this, bbox_dist_threshold):
-
-    #     paired_last = [False] * len(contours_last)
-    #     paired_this = [False] * len(contours_this)
-
-    #     for i, bbox_this in enumerate(contours_this):
-    #         for j, bbox_last in enumerate(contours_last):
-    #             if Bbox.bbox_dist(bbox_this, bbox_last) <= bbox_dist_threshold:
-    #                 paired_this[i] = True
-    #                 paired_last[j] = True
-
-    #     # Add unpaired contours from the last frame to the current frame
-    #     for i, paired in enumerate(paired_last):
-    #         if not paired:
-    #             contours_this.append(contours_last[i])
-
-    #     return contours_this
-
     def estimate_skin_exposure(self):
         # Convert to HSV color space
         hsv = cv2.cvtColor(self.pixel_upper, cv2.COLOR_BGR2HSV)

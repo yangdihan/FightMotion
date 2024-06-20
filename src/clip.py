@@ -8,12 +8,9 @@ import cv2
 
 
 from constants import (
-    # YOLO_THRESHOLD,
-    # RCNN_THRESHOLD,
     MIN_AREA_RATIO,
     BBOX_DIST_THRESHOLD,
     SKIN_PCT_THRESHOLD,
-    SIGNIFICANT_DROP_RATIO,
 )
 from frame import Frame
 from bbox import Bbox
@@ -21,7 +18,7 @@ from contour import Contour
 from pose import Pose
 
 
-class VideoStream:
+class Clip:
     def __init__(self, input_video_path) -> None:
         self.cap = cv2.VideoCapture(input_video_path)
         if not self.cap.isOpened():
@@ -49,18 +46,30 @@ class VideoStream:
     def output(self, output_folder, jpg=True):
 
         out = cv2.VideoWriter(
-            os.path.join(output_folder, "output_video.mp4"),
+            os.path.join(output_folder, "output_video_pose.mp4"),
             cv2.VideoWriter_fourcc(*"mp4v"),
             self.fps,
             (self.frame_width, self.frame_height),
         )
 
+        poses_json_data = []
+
+        print("Exporting frames...")
         for frame in tqdm(self.frames):
             marked_frame = frame.pixels.copy()
+            frame_poses = []
+
             for pose in frame.poses:
-                marked_frame = pose.plot_skeleton_kpts(marked_frame, 3)
-                text = f"tid:{pose.track_id} with seq : {pose.seq_length}"
-                x, y = int(pose.keypoints[-1, 0, 0]), int(pose.keypoints[-1, 0, 1])
+
+                marked_frame = pose.plot_skeleton_kpts(marked_frame)
+                text = f"id:{pose.track_id}"
+
+                keypoints = (
+                    pose.keypoints[-1].cpu().numpy()
+                )  # Get the last set of keypoints
+                x = int(np.median(keypoints[:, 0]))
+                y = int(np.median(keypoints[:, 1]))
+
                 cv2.putText(
                     marked_frame,
                     text,
@@ -72,6 +81,11 @@ class VideoStream:
                     cv2.LINE_AA,
                 )
 
+                frame_poses.append(
+                    {"id": pose.track_id, "keypoints": keypoints.tolist()}
+                )
+
+            poses_json_data.append({"frame": frame.idx, "poses": frame_poses})
             out.write(marked_frame)
 
             if jpg:
@@ -81,6 +95,10 @@ class VideoStream:
                 cv2.imwrite(frame_output_path, marked_frame)
 
         out.release()
+
+        with open(os.path.join(output_folder, "poses.json"), "w") as json_file:
+            json.dump(poses_json_data, json_file, indent=4)
+
         return
 
     def direct_connection(self, items, bbox_dist_threshold):
@@ -252,13 +270,13 @@ class VideoStream:
 
 
 def run_extract_fighters(input_video_path, output_folder):
-    video_stream = VideoStream(input_video_path)
+    clip = Clip(input_video_path)
 
-    video_stream.generate_fighter_bboxes()
-    video_stream.generate_fighter_contour()
-    video_stream.generate_fighter_poses()
+    # clip.generate_fighter_bboxes()
+    # clip.generate_fighter_contour()
+    clip.generate_fighter_poses()
 
-    video_stream.cap.release()
-    video_stream.output(output_folder)
+    clip.cap.release()
+    clip.output(output_folder)
     cv2.destroyAllWindows()
     return
