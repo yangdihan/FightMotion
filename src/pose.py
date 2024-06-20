@@ -109,10 +109,9 @@ class Pose:
             )
             conf2 = keypoints_flat[(sk[1] - 1) * 3 + 2]
 
-            if (
-                (~(pos1[0] <= 0 and pos1[1] <= 0) and conf1 > POSE_CONF_THRESHOLD)
-                and ~(pos2[0] <= 0 and pos2[1] <= 0)
-                and conf2 > POSE_CONF_THRESHOLD
+            if ((pos1[0] > 0 or pos1[1] > 0) and conf1 > POSE_CONF_THRESHOLD) and (
+                (pos2[0] > 0 or pos2[1] > 0) and conf2 > POSE_CONF_THRESHOLD
             ):
+
                 cv2.line(im, pos1, pos2, (int(r), int(g), int(b)), thickness=2)
         return im

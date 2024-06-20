@@ -129,6 +129,10 @@ class Frame:
         keypoints = result.keypoints.data
         track_ids = result.boxes.id
 
+        # if self.idx==59:
+        #     print(f"frame {self.idx}: {len(boxes)} boxes, {len(keypoints)} poses;")
+        #     raise IndexError("debug")
+
         if track_ids is None:
             track_ids = []
         else:
@@ -143,8 +147,11 @@ class Frame:
                 drop_counting[d] += 1
 
         for box, track_id, keypoint in zip(boxes, track_ids, keypoints):
+            # Filter keypoints based on confidence
+            keypoint_conf = keypoint[keypoint[:, 2] > POSE_CONF_THRESHOLD]
+
             # Filter out keypoints with less than MIN_KEYPOINTS points
-            if keypoint.shape[0] > MIN_KEYPOINTS:
+            if keypoint_conf.shape[0] > MIN_KEYPOINTS:
 
                 track = track_history[track_id]
                 track.append(keypoint.unsqueeze(0))
