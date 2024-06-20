@@ -70,7 +70,7 @@ class Clip:
             for pose in frame.poses:
 
                 marked_frame = pose.plot_skeleton_kpts(marked_frame)
-                text = f"id:{pose.track_id}"
+                text = f"id:{pose.track_id} {pose.pct_skin:.2f}%"
 
                 keypoints = (
                     pose.keypoints[-1].cpu().numpy()

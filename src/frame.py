@@ -89,7 +89,7 @@ class Frame:
 
                 # Only consider poses that have appeared for at least MIN_APPEARING_FRAMES frames
                 if len(track) >= MIN_APPEARING_FRAMES:
-                    pose = Pose(torch.cat(track).cpu(), track_id, self)
+                    pose = Pose(torch.cat(track).cpu(), track_id, self, box)
                     self.poses.append(pose)
 
         return track_history, drop_counting

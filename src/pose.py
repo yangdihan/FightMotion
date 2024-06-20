@@ -4,13 +4,79 @@ import cv2
 
 from constants import POSE_CONF_THRESHOLD
 
-
 class Pose:
-    def __init__(self, keypoints, track_id, frame):
+    def __init__(self, keypoints, track_id, frame, bbox):
         self.keypoints = keypoints
         self.track_id = track_id
         self.frame = frame
+        self.bbox = bbox  # Add bbox to the constructor
         self.seq_length = keypoints.shape[0]  # Number of keypoints sequences
+        self.pct_skin = self.calculate_pct_skin()
+
+    def calculate_pct_skin(self):
+        torso_polygon = self.get_torso_polygon()
+        if torso_polygon is None:
+            return 0.0
+
+        mask = np.zeros(self.frame.pixels.shape[:2], dtype=np.uint8)
+        cv2.fillPoly(mask, [torso_polygon], 1)
+        
+        # Apply mask to the frame
+        torso_pixels = cv2.bitwise_and(self.frame.pixels, self.frame.pixels, mask=mask)
+        
+        # Detect skin within the masked torso area
+        skin_mask = self.detect_skin(torso_pixels)
+        skin_pixel_count = np.sum(skin_mask > 0)
+        
+        # Total torso pixels is the sum of the mask
+        total_torso_pixels = np.sum(mask)
+        if total_torso_pixels == 0:
+            return 0.0
+        
+        pct_skin = (skin_pixel_count / total_torso_pixels) * 100  # Convert to percentage
+        
+        return pct_skin
+
+    def detect_skin(self, img):
+        # Convert image to HSV
+        hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+        
+        # Define skin color range in HSV
+        lower_skin = np.array([0, 20, 70], dtype=np.uint8)
+        upper_skin = np.array([20, 255, 255], dtype=np.uint8)
+        
+        # Threshold the HSV image to get only skin colors
+        skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
+        
+        return skin_mask
+
+    def get_torso_polygon(self):
+        def get_fallback_keypoint(primary, *fallbacks, bbox_corner):
+            for point in (primary, *fallbacks):
+                if point[2] > POSE_CONF_THRESHOLD:
+                    return (int(point[0]), int(point[1]))
+            return bbox_corner
+
+        keypoints = self.keypoints[-1].cpu().numpy()
+        bbox_x, bbox_y, bbox_w, bbox_h = self.bbox
+
+        left_shoulder = get_fallback_keypoint(
+            keypoints[5], keypoints[7], keypoints[9], bbox_corner=(int(bbox_x), int(bbox_y))
+        )
+        right_shoulder = get_fallback_keypoint(
+            keypoints[6], keypoints[8], keypoints[10], bbox_corner=(int(bbox_x + bbox_w), int(bbox_y))
+        )
+        left_hip = get_fallback_keypoint(
+            keypoints[11], keypoints[13], keypoints[15], bbox_corner=(int(bbox_x), int(bbox_y + bbox_h))
+        )
+        right_hip = get_fallback_keypoint(
+            keypoints[12], keypoints[14], keypoints[16], bbox_corner=(int(bbox_x + bbox_w), int(bbox_y + bbox_h))
+        )
+
+        if not all([left_shoulder, right_shoulder, left_hip, right_hip]):
+            return None
+
+        return np.array([left_shoulder, right_shoulder, right_hip, left_hip], np.int32)
 
     def plot_skeleton_kpts(self, im):
 
