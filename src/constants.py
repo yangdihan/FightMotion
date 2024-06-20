@@ -9,6 +9,7 @@ BBOX_DIST_THRESHOLD = 0.1
 SKIN_PCT_THRESHOLD = 0.1
 MASK_EXPAND_RATIO = 0.05
 POSE_CONF_THRESHOLD = 0.382
+POSE_CONF_THRESHOLD = 0.382
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -27,4 +28,4 @@ MRCNN_MODEL = (
 )
 
 YOLO_POSE_MODEL = YOLO("weights/yolov8x-pose-p6.pt").to(DEVICE)
-POSE_TRACKER = "bytetrack.yaml"  #'botsort.yaml
+POSE_TRACKER = "botsort"  #'botsort.yaml
