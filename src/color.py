@@ -1,3 +1,4 @@
+import os
 import numpy as np
 import torch
 import cv2
@@ -103,9 +104,41 @@ def uncovered_color_plot(coverage_mask):
     return
 
 
-# Example usage, assuming COLOR_RANGES is defined
-check_color_ranges_coverage()
+def color_classifier(img):
+    hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    max_count = 0
+    most_prevalent_color = None
+    color_counts = {}
+
+    # Mark masked out pixels as -1
+    hsv_img[hsv_img == [0, 0, 0]] = -1
+
+    for color, ranges in COLOR_RANGES.items():
+        count = 0
+        for lower, upper in ranges:
+            color_mask = cv2.inRange(hsv_img, lower, upper)
+            color_count = cv2.countNonZero(color_mask & (hsv_img[..., 2] != -1))
+            count += color_count
+
+        color_counts[color] = count
+
+        if count > max_count:
+            max_count = count
+            most_prevalent_color = color
+
+    return color_counts
 
 
-# Example usage
-plot_3d_color_spectrum("red")
+# export_path = os.path.join(
+#     "D:/Documents/devs/fight_motion/data/interim",
+#     "trunk_24_1_green.jpg",
+# )
+# exported_img = cv2.imread(export_path)
+# exported_hsv_img = cv2.cvtColor(exported_img, cv2.COLOR_BGR2HSV)
+# d_color_counts = color_classifier(exported_hsv_img)
+# print(d_color_counts)
+
+# # Example usage, assuming COLOR_RANGES is defined
+# check_color_ranges_coverage()
+# # Example usage
+# plot_3d_color_spectrum("green")

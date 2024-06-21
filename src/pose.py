@@ -23,11 +23,14 @@ def color_classifier(img):
     max_count = 0
     most_prevalent_color = None
 
+    # Mark masked out pixels as -1
+    hsv_img[hsv_img == [0, 0, 0]] = -1
+
     for color, ranges in COLOR_RANGES.items():
         count = 0
         for lower, upper in ranges:
             color_mask = cv2.inRange(hsv_img, lower, upper)
-            color_count = cv2.countNonZero(color_mask)
+            color_count = cv2.countNonZero(color_mask & (hsv_img[..., 2] != -1))
             count += color_count
 
         if count > max_count:
@@ -56,58 +59,34 @@ class Pose:
                 return (int(point[0]), int(point[1]))
         return bbox_corner
 
-    @staticmethod
-    def find_most_prevalent_color(hsv_img, mask, skin_mask):
+    # @staticmethod
+    def find_most_prevalent_color(self, hsv_img, mask, skin_mask):
         # Convert images to tensor
         hsv_img = torch.tensor(hsv_img, device=DEVICE).permute(2, 0, 1).float() / 255.0
         mask = torch.tensor(mask, device=DEVICE).unsqueeze(0).float()
         skin_mask = torch.tensor(skin_mask, device=DEVICE).unsqueeze(0).float()
 
-        # Apply mask and skin mask to hsv_img
+        # Apply mask to hsv_img
+        # hsv_img_masked = hsv_img * mask
         hsv_img_masked = hsv_img * mask * (skin_mask == 0)
 
-        # Mark masked out pixels as -1
-        hsv_img_masked[hsv_img_masked == 0] = -1
-
-        # Convert hsv_img_masked back to numpy
+        # Convert hsv_img_masked back to numpy without marking pixels as -1
         hsv_img_masked_np = (
             hsv_img_masked.permute(1, 2, 0).cpu().numpy() * 255
         ).astype(np.uint8)
 
-        # Mask out the areas that were -1
-        hsv_img_masked_np[hsv_img_masked_np == -1] = 0
-
         # Use color_classifier to determine the most prevalent color
         most_prevalent_color = color_classifier(hsv_img_masked_np)
 
+        # Export the masked image before classification
+        # export_path = os.path.join(
+        #     "D:/Documents/devs/fight_motion/data/interim/",
+        #     f"trunk_{self.frame.idx}_{self.track_id}_{most_prevalent_color}.jpg",
+        # )
+        # hsv_img_bgr = cv2.cvtColor(hsv_img_masked_np, cv2.COLOR_HSV2BGR)
+        # cv2.imwrite(export_path, hsv_img_bgr)
+
         return most_prevalent_color
-
-        # if self.frame.idx in [0, 24, 81, 82]:
-        # Export each detected color mask as an image
-        # for color, color_mask in color_masks.items():
-        #     if color_counts[color] > 0:
-        #         color_mask_np = color_mask.cpu().numpy().astype(np.uint8) * 255
-        #         color_image = np.zeros(
-        #             (hsv_img.shape[1], hsv_img.shape[2], 3), dtype=np.uint8
-        #         )
-        #         hsv_img_np = hsv_img.permute(1, 2, 0).cpu().numpy() * 255
-        #         # Broadcast color_mask_np to match hsv_img_np dimensions
-        #         color_mask_np = color_mask_np.squeeze()
-        #         color_mask_np_3d = np.repeat(color_mask_np[:, :, np.newaxis], 3, axis=2)
-        #         color_image[color_mask_np_3d == 255] = hsv_img_np[
-        #             color_mask_np_3d == 255
-        #         ]
-
-        #         color_image = cv2.cvtColor(
-        #             color_image.astype(np.uint8), cv2.COLOR_HSV2BGR
-        #         )
-        #         cv2.imwrite(
-        #             os.path.join(
-        #                 "D:/Documents/devs/fight_motion/data/interim/",
-        #                 f"trunk_{self.frame.idx}_{self.track_id}_{color}.jpg",
-        #             ),
-        #             color_image,
-        #         )
 
     def compute_pct_skin(self):
 

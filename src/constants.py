@@ -98,12 +98,12 @@ COLOR_RANGES = {
     "yellow": [
         (
             np.array([20, 75, 75], dtype=np.uint8),
-            np.array([35, 255, 255], dtype=np.uint8),
+            np.array([55, 255, 255], dtype=np.uint8),
         )
     ],
     "green": [
         (
-            np.array([35, 75, 75], dtype=np.uint8),
+            np.array([55, 75, 75], dtype=np.uint8),
             np.array([85, 255, 255], dtype=np.uint8),
         )
     ],
