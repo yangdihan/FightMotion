@@ -69,8 +69,7 @@ class Clip:
 
             for pose in frame.poses:
                 marked_frame = pose.plot_skeleton_kpts(marked_frame)
-                # text = f"id:{pose.track_id}"
-                text = f"id:{pose.track_id}, {int(pose.pct_skin)}%, {pose.pants_color}"
+                text = f"id:{pose.track_id}, {int(pose.pct_skin)}%, {pose.trunk_color}"
 
                 keypoints = (
                     pose.keypoints[-1].cpu().numpy()
@@ -89,14 +88,31 @@ class Clip:
                     cv2.LINE_AA,
                 )
 
-                # Draw the torso and pants polygons
+                # Draw the torso and trunk polygons
                 if pose.torso_polygon is not None:
-                    cv2.polylines(marked_frame, [pose.torso_polygon], isClosed=True, color=(75, 75, 75), thickness=2)
-                if pose.pants_polygon is not None:
-                    cv2.polylines(marked_frame, [pose.pants_polygon], isClosed=True, color=(155, 155, 155), thickness=2)
+                    cv2.polylines(
+                        marked_frame,
+                        [pose.torso_polygon],
+                        isClosed=True,
+                        color=(75, 75, 75),
+                        thickness=2,
+                    )
+                if pose.trunk_polygon is not None:
+                    cv2.polylines(
+                        marked_frame,
+                        [pose.trunk_polygon],
+                        isClosed=True,
+                        color=(155, 155, 155),
+                        thickness=2,
+                    )
 
                 frame_poses.append(
-                    {"id": pose.track_id, "keypoints": keypoints.tolist(), "pct_skin": pose.pct_skin, "pct_pants": pose.pct_pants, "pants_color": pose.pants_color}
+                    {
+                        "id": pose.track_id,
+                        "keypoints": keypoints.tolist(),
+                        "pct_skin": pose.pct_skin,
+                        "trunk_color": pose.trunk_color,
+                    }
                 )
 
             poses_json_data.append({"frame": frame.idx, "poses": frame_poses})
@@ -110,7 +126,9 @@ class Clip:
 
         out.release()
 
-        with open(os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.json"), "w") as json_file:
+        with open(
+            os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.json"), "w"
+        ) as json_file:
             json.dump(poses_json_data, json_file, indent=4)
 
         return

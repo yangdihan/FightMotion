@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import cv2
 
-from constants import POSE_CONF_THRESHOLD, DEVICE
+from constants import POSE_CONF_THRESHOLD, DEVICE, KEYPOINT_VISUAL
 
 
 def sort_vertices_clockwise(vertices):
@@ -20,21 +20,15 @@ def sort_vertices_clockwise(vertices):
 
 class Pose:
     def __init__(self, keypoints, track_id, frame, bbox):
-        # self.resized_hsv_img = None  # Initialize the property
-
         self.keypoints = keypoints
         self.track_id = track_id
         self.frame = frame
         self.bbox = bbox  # Add bbox to the constructor
         self.seq_length = keypoints.shape[0]  # Number of keypoints sequences
-        self.torso_polygon = sort_vertices_clockwise(
-            self.get_torso_polygon()
-        )  # Save torso polygon
-        self.pants_polygon = sort_vertices_clockwise(
-            self.get_pants_polygon()
-        )  # Save pants polygon
-        self.pct_skin = self.calculate_pct_skin()
-        self.pct_pants, self.pants_color = self.calculate_pct_pants()
+        self.torso_polygon = sort_vertices_clockwise(self.get_torso_polygon())
+        self.trunk_polygon = sort_vertices_clockwise(self.get_trunk_polygon())
+        self.pct_skin = self.compute_pct_skin()
+        self.trunk_color = self.classify_trunk_color()
 
     @staticmethod
     def get_fallback_keypoint(primary, *fallbacks, bbox_corner):
@@ -52,7 +46,7 @@ class Pose:
 
         # Apply mask and skin mask to hsv_img
         hsv_img_masked = hsv_img * mask * (skin_mask == 0)
-        
+
         # Mark masked out pixels as -1
         hsv_img_masked[hsv_img_masked == 0] = -1
 
@@ -121,9 +115,13 @@ class Pose:
             combined_mask = torch.zeros_like(mask, device=DEVICE, dtype=torch.bool)
             for lower, upper in ranges:
                 color_mask = (
-                    (hsv_img_masked >= lower[:, None, None])
-                    & (hsv_img_masked <= upper[:, None, None])
-                ).all(dim=0).to(dtype=torch.bool)
+                    (
+                        (hsv_img_masked >= lower[:, None, None])
+                        & (hsv_img_masked <= upper[:, None, None])
+                    )
+                    .all(dim=0)
+                    .to(dtype=torch.bool)
+                )
                 color_mask = color_mask & (hsv_img_masked[0] != -1)
                 combined_mask = combined_mask | color_mask
                 color_count = torch.sum(color_mask)
@@ -135,26 +133,36 @@ class Pose:
         max_count = max(color_counts.values())
         most_prevalent_color = max(color_counts, key=color_counts.get)
 
-        if self.frame.idx in [0, 24, 81, 82]:
-            # Export each detected color mask as an image
-            for color, color_mask in color_masks.items():
-                if color_counts[color] > 0:
-                    color_mask_np = color_mask.cpu().numpy().astype(np.uint8) * 255
-                    color_image = np.zeros((hsv_img.shape[1], hsv_img.shape[2], 3), dtype=np.uint8)
-                    hsv_img_np = hsv_img.permute(1, 2, 0).cpu().numpy() * 255
-                    # Broadcast color_mask_np to match hsv_img_np dimensions
-                    color_mask_np = color_mask_np.squeeze()
-                    color_mask_np_3d = np.repeat(color_mask_np[:, :, np.newaxis], 3, axis=2)
-                    color_image[color_mask_np_3d == 255] = hsv_img_np[color_mask_np_3d == 255]
-                    color_image = cv2.cvtColor(color_image.astype(np.uint8), cv2.COLOR_HSV2BGR)
-                    cv2.imwrite(
-                        os.path.join("D:/Documents/devs/fight_motion/data/interim/", f"trunk_{self.frame.idx}_{self.track_id}_{color}.jpg"),
-                        color_image
-                    )
+        # if self.frame.idx in [0, 24, 81, 82]:
+        # Export each detected color mask as an image
+        for color, color_mask in color_masks.items():
+            if color_counts[color] > 0:
+                color_mask_np = color_mask.cpu().numpy().astype(np.uint8) * 255
+                color_image = np.zeros(
+                    (hsv_img.shape[1], hsv_img.shape[2], 3), dtype=np.uint8
+                )
+                hsv_img_np = hsv_img.permute(1, 2, 0).cpu().numpy() * 255
+                # Broadcast color_mask_np to match hsv_img_np dimensions
+                color_mask_np = color_mask_np.squeeze()
+                color_mask_np_3d = np.repeat(color_mask_np[:, :, np.newaxis], 3, axis=2)
+                color_image[color_mask_np_3d == 255] = hsv_img_np[
+                    color_mask_np_3d == 255
+                ]
+
+                color_image = cv2.cvtColor(
+                    color_image.astype(np.uint8), cv2.COLOR_HSV2BGR
+                )
+                cv2.imwrite(
+                    os.path.join(
+                        "D:/Documents/devs/fight_motion/data/interim/",
+                        f"trunk_{self.frame.idx}_{self.track_id}_{color}.jpg",
+                    ),
+                    color_image,
+                )
 
         return most_prevalent_color
 
-    def calculate_pct_skin(self):
+    def compute_pct_skin(self):
 
         mask = np.zeros(self.frame.pixels.shape[:2], dtype=np.uint8)
         cv2.fillPoly(mask, [self.torso_polygon], 1)
@@ -176,42 +184,32 @@ class Pose:
 
         return pct_skin
 
-    def calculate_pct_pants(self):
+    def classify_trunk_color(self):
 
         mask = np.zeros(self.frame.pixels.shape[:2], dtype=np.uint8)
-        cv2.fillPoly(mask, [self.pants_polygon], 1)
+        cv2.fillPoly(mask, [self.trunk_polygon], 1)
 
         # Apply mask to the frame
-        pants_pixels = cv2.bitwise_and(self.frame.pixels, self.frame.pixels, mask=mask)
+        trunk_pixels = cv2.bitwise_and(self.frame.pixels, self.frame.pixels, mask=mask)
 
-        # Detect skin within the masked pants area
-        skin_mask = self.detect_skin(pants_pixels)
+        # Detect skin within the masked trunk area
+        skin_mask = self.detect_skin(trunk_pixels)
 
-        # Count non-skin (pants) pixels only within the masked area
-        pants_pixel_count = np.sum((skin_mask == 0) & (mask > 0))
+        # Get bounding box of the trunk polygon
+        x, y, w, h = cv2.boundingRect(self.trunk_polygon)
 
-        # Total pants pixels is the sum of the mask
-        total_pants_pixels = np.sum(mask)
-
-        pct_pants = (
-            pants_pixel_count / total_pants_pixels
-        ) * 100  # Convert to percentage
-
-        # Get bounding box of the pants polygon
-        x, y, w, h = cv2.boundingRect(self.pants_polygon)
-
-        # Crop the pants_pixels, mask, and skin_mask to the bounding box
-        cropped_pants_pixels = pants_pixels[y : y + h, x : x + w]
+        # Crop the trunk_pixels, mask, and skin_mask to the bounding box
+        cropped_trunk_pixels = trunk_pixels[y : y + h, x : x + w]
         cropped_mask = mask[y : y + h, x : x + w]
         cropped_skin_mask = skin_mask[y : y + h, x : x + w]
 
-        # Find the most prevalent color in the cropped pants region
-        hsv_pants_cropped = cv2.cvtColor(cropped_pants_pixels, cv2.COLOR_BGR2HSV)
+        # Find the most prevalent color in the cropped trunk region
+        hsv_trunk_cropped = cv2.cvtColor(cropped_trunk_pixels, cv2.COLOR_BGR2HSV)
         most_prevalent_color = self.find_most_prevalent_color(
-            hsv_pants_cropped, cropped_mask, cropped_skin_mask
+            hsv_trunk_cropped, cropped_mask, cropped_skin_mask
         )
 
-        return pct_pants, most_prevalent_color
+        return most_prevalent_color
 
     def detect_skin(self, img):
         # Convert image to HSV
@@ -260,7 +258,7 @@ class Pose:
 
         return np.array([left_shoulder, right_shoulder, right_hip, left_hip], np.int32)
 
-    def get_pants_polygon(self):
+    def get_trunk_polygon(self):
         keypoints = self.keypoints[-1].cpu().numpy()
         bbox_x, bbox_y, bbox_w, bbox_h = self.bbox
 
@@ -288,52 +286,9 @@ class Pose:
 
     def plot_skeleton_kpts(self, im):
 
-        palette = np.array(
-            [
-                [255, 128, 0],
-                [255, 153, 51],
-                [255, 178, 102],
-                [230, 230, 0],
-                [255, 153, 255],
-                [153, 204, 255],
-                [255, 102, 255],
-                [255, 51, 255],
-                [102, 178, 255],
-                [51, 153, 255],
-                [255, 153, 153],
-                [255, 102, 102],
-                [255, 51, 51],
-                [153, 255, 153],
-                [102, 255, 102],
-                [51, 255, 51],
-                [0, 255, 0],
-                [0, 0, 255],
-                [255, 0, 0],
-                [255, 255, 255],
-            ]
-        )
+        palette = np.array(KEYPOINT_VISUAL["palette"])
 
-        skeleton = [
-            [16, 14],
-            [14, 12],
-            [17, 15],
-            [15, 13],
-            [12, 13],
-            [6, 12],
-            [7, 13],
-            [6, 7],
-            [6, 8],
-            [7, 9],
-            [8, 10],
-            [9, 11],
-            [2, 3],
-            [1, 2],
-            [1, 3],
-            [2, 4],
-            [3, 5],
-            [4, 6],
-            [5, 7],
-        ]
+        skeleton = KEYPOINT_VISUAL["skeleton"]
 
         pose_limb_color = palette[
             [9, 9, 9, 9, 7, 7, 7, 0, 0, 0, 0, 0, 16, 16, 16, 16, 16, 16, 16]
