@@ -8,16 +8,10 @@ import cv2
 
 
 from constants import (
-    # MIN_AREA_RATIO,
-    # BBOX_DIST_THRESHOLD,
-    # SKIN_PCT_THRESHOLD,
     POSE_TRACKER,
 )
 from frame import Frame
 
-# from bbox import Bbox
-# from contour import Contour
-# from pose import Pose
 
 DIR_IN = "D:/Documents/devs/fight_motion/data/raw/"
 DIR_OUT = "D:/Documents/devs/fight_motion/data/interim/"
@@ -69,7 +63,9 @@ class Clip:
 
             for pose in frame.poses:
                 marked_frame = pose.plot_skeleton_kpts(marked_frame)
-                text = f"id:{pose.track_id}, {int(pose.pct_skin)}%, {pose.trunk_color}"
+                text = (
+                    f"id:{pose.track_id}, {int(pose.pct_skin*100)}%, {pose.trunk_color}"
+                )
 
                 keypoints = (
                     pose.keypoints[-1].cpu().numpy()

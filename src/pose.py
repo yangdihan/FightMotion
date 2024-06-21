@@ -50,7 +50,7 @@ class Pose:
         self.torso_polygon = sort_vertices_clockwise(self.get_torso_polygon())
         self.trunk_polygon = sort_vertices_clockwise(self.get_trunk_polygon())
         self.pct_skin = self.compute_pct_skin()
-        self.trunk_color = self.classify_trunk_color()
+        self.trunk_color = None
 
     @staticmethod
     def get_fallback_keypoint(primary, *fallbacks, bbox_corner):
@@ -104,9 +104,7 @@ class Pose:
         # Total torso pixels is the sum of the mask
         total_torso_pixels = np.sum(mask)
 
-        pct_skin = (
-            skin_pixel_count / total_torso_pixels
-        ) * 100  # Convert to percentage
+        pct_skin = skin_pixel_count / total_torso_pixels
 
         return pct_skin
 
@@ -135,7 +133,8 @@ class Pose:
             hsv_trunk_cropped, cropped_mask, cropped_skin_mask
         )
 
-        return most_prevalent_color
+        self.trunk_color = most_prevalent_color
+        return
 
     def detect_skin(self, img):
         # Convert image to HSV

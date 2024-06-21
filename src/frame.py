@@ -3,19 +3,12 @@ import torch
 import cv2
 
 from constants import (
-    # MASK_EXPAND_RATIO,
-    # YOLO_BOX_MODEL,
-    # YOLO_THRESHOLD,
-    # MRCNN_MODEL,
-    # DEVICE,
-    # RCNN_THRESHOLD,
     YOLO_POSE_MODEL,
     POSE_TRACKER,
     POSE_CONF_THRESHOLD,
 )
 
-# from bbox import Bbox
-# from contour import Contour
+
 from pose import Pose
 
 
@@ -50,10 +43,6 @@ class Frame:
         keypoints = result.keypoints.data
         track_ids = result.boxes.id
 
-        # if self.idx==59:
-        #     print(f"frame {self.idx}: {len(boxes)} boxes, {len(keypoints)} poses;")
-        #     raise IndexError("debug")
-
         if track_ids is None:
             track_ids = []
         else:
@@ -68,29 +57,34 @@ class Frame:
                 drop_counting[d] += 1
 
         for box, track_id, keypoint in zip(boxes, track_ids, keypoints):
-            # Filter keypoints based on confidence
-            keypoint_conf = keypoint[
-                ((keypoint[:, 0] > 0) | (keypoint[:, 1] > 0))
-                & (keypoint[:, 2] > POSE_CONF_THRESHOLD)
-            ]
 
-            # if 320<= self.idx <=340:
-            #     print(self.idx, track_id, len(keypoint_conf))
-            # raise KeyError('debug')
+            # check if bbox is big enough
+            x, y, w, h = box
+            if w * h > self.pixels.shape[0] * self.pixels.shape[1] * 0.1:
 
-            # Filter out keypoints with less than MIN_KEYPOINTS points
-            if keypoint_conf.shape[0] > MIN_KEYPOINTS:
+                # Filter keypoints based on confidence
+                keypoint_conf = keypoint[
+                    ((keypoint[:, 0] > 0) | (keypoint[:, 1] > 0))
+                    & (keypoint[:, 2] > POSE_CONF_THRESHOLD)
+                ]
 
-                track = track_history[track_id]
-                track.append(keypoint.unsqueeze(0))
+                # Filter out keypoints with less than MIN_KEYPOINTS points
+                if keypoint_conf.shape[0] > MIN_KEYPOINTS:
 
-                if len(track) > MAX_MISSING_FRAMES:
-                    track.pop(0)
+                    track = track_history[track_id]
+                    track.append(keypoint.unsqueeze(0))
 
-                # Only consider poses that have appeared for at least MIN_APPEARING_FRAMES frames
-                if len(track) >= MIN_APPEARING_FRAMES:
-                    pose = Pose(torch.cat(track).cpu(), track_id, self, box)
-                    self.poses.append(pose)
+                    if len(track) > MAX_MISSING_FRAMES:
+                        track.pop(0)
+
+                    # Only consider poses that have appeared for at least MIN_APPEARING_FRAMES frames
+                    if len(track) >= MIN_APPEARING_FRAMES:
+                        pose = Pose(torch.cat(track).cpu(), track_id, self, box)
+
+                        if pose.pct_skin > 0.1:
+                            # check if person is naked enough
+                            pose.classify_trunk_color()
+                            self.poses.append(pose)
 
         return track_history, drop_counting
 
