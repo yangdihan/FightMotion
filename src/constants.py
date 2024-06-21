@@ -81,45 +81,51 @@ KEYPOINT_VISUAL = {
 COLOR_RANGES = {
     "red": [
         (
-            np.array([0, 50, 50], dtype=np.uint8),
-            np.array([10, 255, 255], dtype=np.uint8),
+            np.array([0, 75, 75], dtype=np.uint8),
+            np.array([5, 255, 255], dtype=np.uint8),
         ),
         (
-            np.array([160, 50, 50], dtype=np.uint8),
+            np.array([165, 75, 75], dtype=np.uint8),
             np.array([180, 255, 255], dtype=np.uint8),
         ),
     ],
-    "yellow": [
+    "blue": [
         (
-            np.array([20, 50, 50], dtype=np.uint8),
-            np.array([30, 255, 255], dtype=np.uint8),
+            np.array([85, 75, 75], dtype=np.uint8),
+            np.array([125, 255, 255], dtype=np.uint8),
         )
     ],
-    "skin": [
+    "yellow": [
         (
-            np.array([0, 20, 50], dtype=np.uint8),
-            np.array([25, 255, 255], dtype=np.uint8),
+            np.array([20, 75, 75], dtype=np.uint8),
+            np.array([35, 255, 255], dtype=np.uint8),
         )
     ],
     "green": [
         (
-            np.array([35, 50, 50], dtype=np.uint8),
+            np.array([35, 75, 75], dtype=np.uint8),
             np.array([85, 255, 255], dtype=np.uint8),
         )
     ],
-    "blue": [
+    "purple": [
         (
-            np.array([100, 50, 50], dtype=np.uint8),
-            np.array([140, 255, 255], dtype=np.uint8),
+            np.array([125, 75, 75], dtype=np.uint8),
+            np.array([165, 255, 255], dtype=np.uint8),
         )
     ],
-    "black": [
-        (np.array([0, 0, 0], dtype=np.uint8), np.array([180, 255, 50], dtype=np.uint8))
+    "skin": [
+        (
+            np.array([5, 50, 50], dtype=np.uint8),
+            np.array([20, 255, 255], dtype=np.uint8),
+        )
     ],
     "white": [
         (
-            np.array([0, 0, 200], dtype=np.uint8),
-            np.array([180, 55, 255], dtype=np.uint8),
+            np.array([0, 0, 128], dtype=np.uint8),
+            np.array([180, 75, 255], dtype=np.uint8),
         )
+    ],
+    "black": [
+        (np.array([0, 0, 0], dtype=np.uint8), np.array([180, 255, 75], dtype=np.uint8))
     ],
 }
