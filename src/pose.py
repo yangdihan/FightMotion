@@ -1,17 +1,18 @@
+import os
 import numpy as np
 import torch
 import cv2
 
-from constants import POSE_CONF_THRESHOLD
+from constants import POSE_CONF_THRESHOLD, DEVICE
 
 
 def sort_vertices_clockwise(vertices):
     # Calculate the centroid of the polygon
     centroid = np.mean(vertices, axis=0)
-    
+
     # Compute the angle of each vertex relative to the centroid
     angles = np.arctan2(vertices[:, 1] - centroid[1], vertices[:, 0] - centroid[0])
-    
+
     # Sort the vertices based on these angles
     sorted_indices = np.argsort(angles)
     return vertices[sorted_indices]
@@ -19,88 +20,141 @@ def sort_vertices_clockwise(vertices):
 
 class Pose:
     def __init__(self, keypoints, track_id, frame, bbox):
+        # self.resized_hsv_img = None  # Initialize the property
+
         self.keypoints = keypoints
         self.track_id = track_id
         self.frame = frame
         self.bbox = bbox  # Add bbox to the constructor
         self.seq_length = keypoints.shape[0]  # Number of keypoints sequences
-        self.torso_polygon = sort_vertices_clockwise(self.get_torso_polygon())  # Save torso polygon
-        self.pants_polygon = sort_vertices_clockwise(self.get_pants_polygon())  # Save pants polygon
+        self.torso_polygon = sort_vertices_clockwise(
+            self.get_torso_polygon()
+        )  # Save torso polygon
+        self.pants_polygon = sort_vertices_clockwise(
+            self.get_pants_polygon()
+        )  # Save pants polygon
         self.pct_skin = self.calculate_pct_skin()
         self.pct_pants, self.pants_color = self.calculate_pct_pants()
 
     @staticmethod
     def get_fallback_keypoint(primary, *fallbacks, bbox_corner):
         for point in (primary, *fallbacks):
-            if (point[0]>0 or point[1]>0) and point[2] > POSE_CONF_THRESHOLD:
+            if (point[0] > 0 or point[1] > 0) and point[2] > POSE_CONF_THRESHOLD:
                 return (int(point[0]), int(point[1]))
         return bbox_corner
 
-    @staticmethod
-    def find_most_prevalent_color(hsv_img, mask, skin_mask):
+    # @staticmethod
+    def find_most_prevalent_color(self, hsv_img, mask, skin_mask):
         # Convert images to tensor
-        hsv_img = torch.tensor(hsv_img, device="cuda").permute(2, 0, 1).float() / 255.0
-        mask = torch.tensor(mask, device="cuda").unsqueeze(0).float()
-        skin_mask = torch.tensor(skin_mask, device="cuda").unsqueeze(0).float()
+        hsv_img = torch.tensor(hsv_img, device=DEVICE).permute(2, 0, 1).float() / 255.0
+        mask = torch.tensor(mask, device=DEVICE).unsqueeze(0).float()
+        skin_mask = torch.tensor(skin_mask, device=DEVICE).unsqueeze(0).float()
 
         # Apply mask and skin mask to hsv_img
         hsv_img_masked = hsv_img * mask * (skin_mask == 0)
-
-        # Get bounding box of the masked region
-        nonzero_coords = torch.nonzero(mask)
-        min_coords = nonzero_coords.min(dim=0)[0]
-        max_coords = nonzero_coords.max(dim=0)[0]
-        min_y, min_x = min_coords[0], min_coords[1]
-        max_y, max_x = max_coords[0], max_coords[1]
-
-        # Crop the hsv_img and mask to the bounding box
-        hsv_img_cropped = hsv_img_masked[:, min_y:max_y + 1, min_x:max_x + 1]
-
-        # Calculate the new size to downsample
-        _, height, width = hsv_img_cropped.shape
-        max_dim = max(height, width)
-        if max_dim > 8:
-            scale_factor = 8 / max_dim
-            new_height = max(1, int(height * scale_factor))
-            new_width = max(1, int(width * scale_factor))
-            hsv_img_resized = torch.nn.functional.interpolate(hsv_img_cropped.unsqueeze(0), size=(new_height, new_width), mode='bilinear', align_corners=False).squeeze(0)
-        else:
-            hsv_img_resized = hsv_img_cropped
+        
+        # Mark masked out pixels as -1
+        hsv_img_masked[hsv_img_masked == 0] = -1
 
         # Define color ranges in HSV
         color_ranges = {
             "red": [
-                (torch.tensor([0, 0.2, 0.2], device="cuda"), torch.tensor([0.04, 1, 1], device="cuda")),
-                (torch.tensor([0.67, 0.2, 0.2], device="cuda"), torch.tensor([1, 1, 1], device="cuda"))
+                (
+                    torch.tensor([0, 0.2, 0.2], device=DEVICE),
+                    torch.tensor([0.04, 1, 1], device=DEVICE),
+                ),
+                (
+                    torch.tensor([0.92, 0.2, 0.2], device=DEVICE),
+                    torch.tensor([1, 1, 1], device=DEVICE),
+                ),
             ],
-            "blue": [(torch.tensor([0.55, 0.2, 0.2], device="cuda"), torch.tensor([0.78, 1, 1], device="cuda"))],
-            "green": [(torch.tensor([0.22, 0.2, 0.2], device="cuda"), torch.tensor([0.44, 1, 1], device="cuda"))],
-            "yellow": [(torch.tensor([0.11, 0.2, 0.2], device="cuda"), torch.tensor([0.16, 1, 1], device="cuda"))],
-            "black": [(torch.tensor([0, 0, 0], device="cuda"), torch.tensor([1, 1, 0.2], device="cuda"))],
-            "white": [(torch.tensor([0, 0, 0.8], device="cuda"), torch.tensor([1, 0.2, 1], device="cuda"))]
+            "orange": [
+                (
+                    torch.tensor([0.05, 0.2, 0.2], device=DEVICE),
+                    torch.tensor([0.10, 1, 1], device=DEVICE),
+                )
+            ],
+            "yellow": [
+                (
+                    torch.tensor([0.11, 0.2, 0.2], device=DEVICE),
+                    torch.tensor([0.20, 1, 1], device=DEVICE),
+                )
+            ],
+            "green": [
+                (
+                    torch.tensor([0.21, 0.2, 0.2], device=DEVICE),
+                    torch.tensor([0.44, 1, 1], device=DEVICE),
+                )
+            ],
+            "blue": [
+                (
+                    torch.tensor([0.45, 0.2, 0.2], device=DEVICE),
+                    torch.tensor([0.70, 1, 1], device=DEVICE),
+                )
+            ],
+            "pink": [
+                (
+                    torch.tensor([0.71, 0.2, 0.2], device=DEVICE),
+                    torch.tensor([0.92, 1, 1], device=DEVICE),
+                )
+            ],
+            "black": [
+                (
+                    torch.tensor([0, 0, 0], device=DEVICE),
+                    torch.tensor([1, 1, 0.05], device=DEVICE),
+                )
+            ],
+            "white": [
+                (
+                    torch.tensor([0, 0, 0.8], device=DEVICE),
+                    torch.tensor([1, 0.1, 1], device=DEVICE),
+                )
+            ],
         }
 
-        max_count = 0
-        most_prevalent_color = None
+        color_counts = {color: 0 for color in color_ranges}
+        color_masks = {color: None for color in color_ranges}
 
-        # Calculate the most prevalent color
+        # Calculate the most prevalent color and create masks for each color
         for color, ranges in color_ranges.items():
             count = 0
+            combined_mask = torch.zeros_like(mask, device=DEVICE, dtype=torch.bool)
             for lower, upper in ranges:
-                color_mask = ((hsv_img_resized >= lower[:, None, None]) & (hsv_img_resized <= upper[:, None, None])).all(dim=0)
+                color_mask = (
+                    (hsv_img_masked >= lower[:, None, None])
+                    & (hsv_img_masked <= upper[:, None, None])
+                ).all(dim=0).to(dtype=torch.bool)
+                color_mask = color_mask & (hsv_img_masked[0] != -1)
+                combined_mask = combined_mask | color_mask
                 color_count = torch.sum(color_mask)
                 count += color_count.item()
 
-            if count > max_count:
-                max_count = count
-                most_prevalent_color = color
+            color_counts[color] = count
+            color_masks[color] = combined_mask
+
+        max_count = max(color_counts.values())
+        most_prevalent_color = max(color_counts, key=color_counts.get)
+
+        if self.frame.idx in [0, 24, 81, 82]:
+            # Export each detected color mask as an image
+            for color, color_mask in color_masks.items():
+                if color_counts[color] > 0:
+                    color_mask_np = color_mask.cpu().numpy().astype(np.uint8) * 255
+                    color_image = np.zeros((hsv_img.shape[1], hsv_img.shape[2], 3), dtype=np.uint8)
+                    hsv_img_np = hsv_img.permute(1, 2, 0).cpu().numpy() * 255
+                    # Broadcast color_mask_np to match hsv_img_np dimensions
+                    color_mask_np = color_mask_np.squeeze()
+                    color_mask_np_3d = np.repeat(color_mask_np[:, :, np.newaxis], 3, axis=2)
+                    color_image[color_mask_np_3d == 255] = hsv_img_np[color_mask_np_3d == 255]
+                    color_image = cv2.cvtColor(color_image.astype(np.uint8), cv2.COLOR_HSV2BGR)
+                    cv2.imwrite(
+                        os.path.join("D:/Documents/devs/fight_motion/data/interim/", f"trunk_{self.frame.idx}_{self.track_id}_{color}.jpg"),
+                        color_image
+                    )
 
         return most_prevalent_color
 
     def calculate_pct_skin(self):
-        # torso_polygon = self.get_torso_polygon()
-        if self.torso_polygon is None:
-            return 0.0
 
         mask = np.zeros(self.frame.pixels.shape[:2], dtype=np.uint8)
         cv2.fillPoly(mask, [self.torso_polygon], 1)
@@ -110,13 +164,11 @@ class Pose:
 
         # Detect skin within the masked torso area
         skin_mask = self.detect_skin(torso_pixels)
-        # print(np.max(skin_mask), np.min(skin_mask))
+
         skin_pixel_count = np.sum((skin_mask > 0) & (mask > 0))
 
         # Total torso pixels is the sum of the mask
         total_torso_pixels = np.sum(mask)
-        if total_torso_pixels == 0:
-            return 0.0
 
         pct_skin = (
             skin_pixel_count / total_torso_pixels
@@ -125,9 +177,6 @@ class Pose:
         return pct_skin
 
     def calculate_pct_pants(self):
-        # pants_polygon = self.get_pants_polygon()
-        if self.pants_polygon is None:
-            return 0.0
 
         mask = np.zeros(self.frame.pixels.shape[:2], dtype=np.uint8)
         cv2.fillPoly(mask, [self.pants_polygon], 1)
@@ -138,28 +187,29 @@ class Pose:
         # Detect skin within the masked pants area
         skin_mask = self.detect_skin(pants_pixels)
 
-        # Invert the skin mask to get the non-skin (pants) mask
-        # non_skin_mask = cv2.bitwise_not(skin_mask)
-
         # Count non-skin (pants) pixels only within the masked area
         pants_pixel_count = np.sum((skin_mask == 0) & (mask > 0))
 
         # Total pants pixels is the sum of the mask
         total_pants_pixels = np.sum(mask)
-        if total_pants_pixels == 0:
-            return 0.0
 
-        # print(self.frame.idx, pants_pixel_count, total_pants_pixels)
         pct_pants = (
             pants_pixel_count / total_pants_pixels
         ) * 100  # Convert to percentage
 
-        # Find the most prevalent color in the pants region
-        hsv_pants = cv2.cvtColor(pants_pixels, cv2.COLOR_BGR2HSV)
-        most_prevalent_color = Pose.find_most_prevalent_color(
-            hsv_pants, mask, skin_mask
+        # Get bounding box of the pants polygon
+        x, y, w, h = cv2.boundingRect(self.pants_polygon)
+
+        # Crop the pants_pixels, mask, and skin_mask to the bounding box
+        cropped_pants_pixels = pants_pixels[y : y + h, x : x + w]
+        cropped_mask = mask[y : y + h, x : x + w]
+        cropped_skin_mask = skin_mask[y : y + h, x : x + w]
+
+        # Find the most prevalent color in the cropped pants region
+        hsv_pants_cropped = cv2.cvtColor(cropped_pants_pixels, cv2.COLOR_BGR2HSV)
+        most_prevalent_color = self.find_most_prevalent_color(
+            hsv_pants_cropped, cropped_mask, cropped_skin_mask
         )
-        # most_prevalent_color = 'nope'
 
         return pct_pants, most_prevalent_color
 
@@ -233,11 +283,6 @@ class Pose:
 
         if not all([left_hip, right_hip, left_knee, right_knee]):
             return None
-        
-        # if self.frame.idx==71:
-        #     if self.track_id==3:
-        #         print(self.bbox)
-        #         print([left_hip, right_hip, left_knee, right_knee])
 
         return np.array([left_hip, right_hip, right_knee, left_knee], np.int32)
 
