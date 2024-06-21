@@ -3,7 +3,7 @@ import numpy as np
 import torch
 import cv2
 
-from constants import POSE_CONF_THRESHOLD, DEVICE, KEYPOINT_VISUAL
+from constants import POSE_CONF_THRESHOLD, DEVICE, KEYPOINT_VISUAL, COLOR_RANGES
 
 
 def sort_vertices_clockwise(vertices):
@@ -16,6 +16,25 @@ def sort_vertices_clockwise(vertices):
     # Sort the vertices based on these angles
     sorted_indices = np.argsort(angles)
     return vertices[sorted_indices]
+
+
+def color_classifier(img):
+    hsv_img = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+    max_count = 0
+    most_prevalent_color = None
+
+    for color, ranges in COLOR_RANGES.items():
+        count = 0
+        for lower, upper in ranges:
+            color_mask = cv2.inRange(hsv_img, lower, upper)
+            color_count = cv2.countNonZero(color_mask)
+            count += color_count
+
+        if count > max_count:
+            max_count = count
+            most_prevalent_color = color
+
+    return most_prevalent_color
 
 
 class Pose:
@@ -37,8 +56,8 @@ class Pose:
                 return (int(point[0]), int(point[1]))
         return bbox_corner
 
-    # @staticmethod
-    def find_most_prevalent_color(self, hsv_img, mask, skin_mask):
+    @staticmethod
+    def find_most_prevalent_color(hsv_img, mask, skin_mask):
         # Convert images to tensor
         hsv_img = torch.tensor(hsv_img, device=DEVICE).permute(2, 0, 1).float() / 255.0
         mask = torch.tensor(mask, device=DEVICE).unsqueeze(0).float()
@@ -50,117 +69,45 @@ class Pose:
         # Mark masked out pixels as -1
         hsv_img_masked[hsv_img_masked == 0] = -1
 
-        # Define color ranges in HSV
-        color_ranges = {
-            "red": [
-                (
-                    torch.tensor([0, 0.2, 0.2], device=DEVICE),
-                    torch.tensor([0.04, 1, 1], device=DEVICE),
-                ),
-                (
-                    torch.tensor([0.92, 0.2, 0.2], device=DEVICE),
-                    torch.tensor([1, 1, 1], device=DEVICE),
-                ),
-            ],
-            "orange": [
-                (
-                    torch.tensor([0.05, 0.2, 0.2], device=DEVICE),
-                    torch.tensor([0.10, 1, 1], device=DEVICE),
-                )
-            ],
-            "yellow": [
-                (
-                    torch.tensor([0.11, 0.2, 0.2], device=DEVICE),
-                    torch.tensor([0.20, 1, 1], device=DEVICE),
-                )
-            ],
-            "green": [
-                (
-                    torch.tensor([0.21, 0.2, 0.2], device=DEVICE),
-                    torch.tensor([0.44, 1, 1], device=DEVICE),
-                )
-            ],
-            "blue": [
-                (
-                    torch.tensor([0.45, 0.2, 0.2], device=DEVICE),
-                    torch.tensor([0.70, 1, 1], device=DEVICE),
-                )
-            ],
-            "pink": [
-                (
-                    torch.tensor([0.71, 0.2, 0.2], device=DEVICE),
-                    torch.tensor([0.92, 1, 1], device=DEVICE),
-                )
-            ],
-            "black": [
-                (
-                    torch.tensor([0, 0, 0], device=DEVICE),
-                    torch.tensor([1, 1, 0.05], device=DEVICE),
-                )
-            ],
-            "white": [
-                (
-                    torch.tensor([0, 0, 0.8], device=DEVICE),
-                    torch.tensor([1, 0.1, 1], device=DEVICE),
-                )
-            ],
-        }
+        # Convert hsv_img_masked back to numpy
+        hsv_img_masked_np = (
+            hsv_img_masked.permute(1, 2, 0).cpu().numpy() * 255
+        ).astype(np.uint8)
 
-        color_counts = {color: 0 for color in color_ranges}
-        color_masks = {color: None for color in color_ranges}
+        # Mask out the areas that were -1
+        hsv_img_masked_np[hsv_img_masked_np == -1] = 0
 
-        # Calculate the most prevalent color and create masks for each color
-        for color, ranges in color_ranges.items():
-            count = 0
-            combined_mask = torch.zeros_like(mask, device=DEVICE, dtype=torch.bool)
-            for lower, upper in ranges:
-                color_mask = (
-                    (
-                        (hsv_img_masked >= lower[:, None, None])
-                        & (hsv_img_masked <= upper[:, None, None])
-                    )
-                    .all(dim=0)
-                    .to(dtype=torch.bool)
-                )
-                color_mask = color_mask & (hsv_img_masked[0] != -1)
-                combined_mask = combined_mask | color_mask
-                color_count = torch.sum(color_mask)
-                count += color_count.item()
+        # Use color_classifier to determine the most prevalent color
+        most_prevalent_color = color_classifier(hsv_img_masked_np)
 
-            color_counts[color] = count
-            color_masks[color] = combined_mask
-
-        max_count = max(color_counts.values())
-        most_prevalent_color = max(color_counts, key=color_counts.get)
+        return most_prevalent_color
 
         # if self.frame.idx in [0, 24, 81, 82]:
         # Export each detected color mask as an image
-        for color, color_mask in color_masks.items():
-            if color_counts[color] > 0:
-                color_mask_np = color_mask.cpu().numpy().astype(np.uint8) * 255
-                color_image = np.zeros(
-                    (hsv_img.shape[1], hsv_img.shape[2], 3), dtype=np.uint8
-                )
-                hsv_img_np = hsv_img.permute(1, 2, 0).cpu().numpy() * 255
-                # Broadcast color_mask_np to match hsv_img_np dimensions
-                color_mask_np = color_mask_np.squeeze()
-                color_mask_np_3d = np.repeat(color_mask_np[:, :, np.newaxis], 3, axis=2)
-                color_image[color_mask_np_3d == 255] = hsv_img_np[
-                    color_mask_np_3d == 255
-                ]
+        # for color, color_mask in color_masks.items():
+        #     if color_counts[color] > 0:
+        #         color_mask_np = color_mask.cpu().numpy().astype(np.uint8) * 255
+        #         color_image = np.zeros(
+        #             (hsv_img.shape[1], hsv_img.shape[2], 3), dtype=np.uint8
+        #         )
+        #         hsv_img_np = hsv_img.permute(1, 2, 0).cpu().numpy() * 255
+        #         # Broadcast color_mask_np to match hsv_img_np dimensions
+        #         color_mask_np = color_mask_np.squeeze()
+        #         color_mask_np_3d = np.repeat(color_mask_np[:, :, np.newaxis], 3, axis=2)
+        #         color_image[color_mask_np_3d == 255] = hsv_img_np[
+        #             color_mask_np_3d == 255
+        #         ]
 
-                color_image = cv2.cvtColor(
-                    color_image.astype(np.uint8), cv2.COLOR_HSV2BGR
-                )
-                cv2.imwrite(
-                    os.path.join(
-                        "D:/Documents/devs/fight_motion/data/interim/",
-                        f"trunk_{self.frame.idx}_{self.track_id}_{color}.jpg",
-                    ),
-                    color_image,
-                )
-
-        return most_prevalent_color
+        #         color_image = cv2.cvtColor(
+        #             color_image.astype(np.uint8), cv2.COLOR_HSV2BGR
+        #         )
+        #         cv2.imwrite(
+        #             os.path.join(
+        #                 "D:/Documents/devs/fight_motion/data/interim/",
+        #                 f"trunk_{self.frame.idx}_{self.track_id}_{color}.jpg",
+        #             ),
+        #             color_image,
+        #         )
 
     def compute_pct_skin(self):
 
@@ -214,13 +161,10 @@ class Pose:
     def detect_skin(self, img):
         # Convert image to HSV
         hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
-        # Define skin color range in HSV
-        lower_skin = np.array([0, 20, 50], dtype=np.uint8)
-        upper_skin = np.array([25, 255, 255], dtype=np.uint8)
-
         # Threshold the HSV image to get only skin colors
-        skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
+        skin_mask = cv2.inRange(
+            hsv, COLOR_RANGES["skin"][0][0], COLOR_RANGES["skin"][0][1]
+        )
 
         return skin_mask
 
