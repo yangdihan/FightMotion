@@ -83,7 +83,7 @@ class Frame:
 
                         if pose.pct_skin > 0.1:
                             # check if person is naked enough
-                            pose.classify_trunk_color()
+                            # pose.classify_trunk_color()
                             self.poses.append(pose)
 
         return track_history, drop_counting

@@ -12,6 +12,8 @@ MASK_EXPAND_RATIO = 0.05
 POSE_CONF_THRESHOLD = 0.382
 POSE_CONF_THRESHOLD = 0.382
 
+SIZE_SQUARE_IMG = 16
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # # Load YOLOv5 model

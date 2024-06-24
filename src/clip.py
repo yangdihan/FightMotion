@@ -3,6 +3,7 @@ from collections import defaultdict
 import json
 from tqdm import tqdm
 import numpy as np
+from sklearn.cluster import KMeans
 import torch
 import cv2
 
@@ -64,7 +65,8 @@ class Clip:
             for pose in frame.poses:
                 marked_frame = pose.plot_skeleton_kpts(marked_frame)
                 text = (
-                    f"id:{pose.track_id}, {int(pose.pct_skin*100)}%, {pose.trunk_color}"
+                    # f"track:{pose.track_id}, trunk:{pose.trunk_id}, {int(pose.pct_skin*100)}%, {pose.trunk_color}"
+                    f"track:{pose.track_id}, trunk:{pose.trunk_id}, {int(pose.pct_skin*100)}%"
                 )
 
                 keypoints = (
@@ -107,7 +109,8 @@ class Clip:
                         "id": pose.track_id,
                         "keypoints": keypoints.tolist(),
                         "pct_skin": pose.pct_skin,
-                        "trunk_color": pose.trunk_color,
+                        "trunk": pose.trunk_id,
+                        # "trunk_color": pose.trunk_color,
                     }
                 )
 
@@ -141,6 +144,61 @@ class Clip:
 
         return
 
+    def bisection_trunk_color(self):
+        trunk_colors = []
+
+        # Collect all trunk colors from all frames and ensure consistent size
+        for frame in self.frames:
+            for pose in frame.poses:
+                trunk_img = pose.trunk_img.cpu().numpy()
+                if (
+                    trunk_img.shape[1] != 8 or trunk_img.shape[2] != 8
+                ):  # Resize to 8x8 if necessary
+                    trunk_img = cv2.resize(
+                        trunk_img.transpose(1, 2, 0), (8, 8)
+                    ).transpose(2, 0, 1)
+                trunk_colors.append(trunk_img.flatten())
+
+        # Convert to numpy array
+        trunk_colors_np = np.array(trunk_colors)
+
+        # Perform K-Means clustering
+        kmeans = KMeans(n_clusters=2, random_state=0).fit(trunk_colors_np)
+
+        # # Visualize the cluster centers
+        # cluster_centers = kmeans.cluster_centers_.reshape(-1, 3, 8, 8)
+        # cluster_centers_rgb = []
+        # for center in cluster_centers:
+        #     center_hsv = (center * 255).astype(np.uint8).transpose(1, 2, 0)
+        #     center_rgb = cv2.cvtColor(center_hsv, cv2.COLOR_HSV2RGB)
+        #     cluster_centers_rgb.append(center_rgb)
+
+        # import matplotlib.pyplot as plt
+        # # Display the cluster centers
+        # fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+        # for ax, center_rgb in zip(axes, cluster_centers_rgb):
+        #     ax.imshow(center_rgb)
+        #     ax.axis('off')
+        # plt.show()
+        # raise ValueError('debug')
+
+        # Update tracker_id based on the closest color cluster
+        for frame in self.frames:
+            for pose in frame.poses:
+                trunk_img = pose.trunk_img.cpu().numpy()
+                if (
+                    trunk_img.shape[1] != 8 or trunk_img.shape[2] != 8
+                ):  # Resize to 8x8 if necessary
+                    trunk_img = cv2.resize(
+                        trunk_img.transpose(1, 2, 0), (8, 8)
+                    ).transpose(2, 0, 1)
+                pose_color_np = trunk_img.flatten().reshape(1, -1)
+                distances = kmeans.transform(pose_color_np)
+                closest_cluster = np.argmin(distances)
+                pose.trunk_id = closest_cluster
+
+        return
+
 
 def run_extract_fighters(fn_video):
     clip = Clip(fn_video)
@@ -148,6 +206,8 @@ def run_extract_fighters(fn_video):
     # clip.generate_fighter_bboxes()
     # clip.generate_fighter_contour()
     clip.generate_fighter_poses()
+
+    clip.bisection_trunk_color()
 
     clip.cap.release()
     clip.output()
