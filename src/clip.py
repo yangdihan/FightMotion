@@ -10,6 +10,7 @@ import cv2
 
 from constants import (
     POSE_TRACKER,
+    SIZE_SQUARE_IMG,
 )
 from frame import Frame
 
@@ -86,23 +87,23 @@ class Clip:
                     cv2.LINE_AA,
                 )
 
-                # Draw the torso and trunk polygons
-                if pose.torso_polygon is not None:
-                    cv2.polylines(
-                        marked_frame,
-                        [pose.torso_polygon],
-                        isClosed=True,
-                        color=(75, 75, 75),
-                        thickness=2,
-                    )
-                if pose.trunk_polygon is not None:
-                    cv2.polylines(
-                        marked_frame,
-                        [pose.trunk_polygon],
-                        isClosed=True,
-                        color=(155, 155, 155),
-                        thickness=2,
-                    )
+                # # Draw the torso and trunk polygons
+                # if pose.torso_polygon is not None:
+                #     cv2.polylines(
+                #         marked_frame,
+                #         [pose.torso_polygon],
+                #         isClosed=True,
+                #         color=(75, 75, 75),
+                #         thickness=2,
+                #     )
+                # if pose.trunk_polygon is not None:
+                #     cv2.polylines(
+                #         marked_frame,
+                #         [pose.trunk_polygon],
+                #         isClosed=True,
+                #         color=(155, 155, 155),
+                #         thickness=2,
+                #     )
 
                 frame_poses.append(
                     {
@@ -150,52 +151,30 @@ class Clip:
         # Collect all trunk colors from all frames and ensure consistent size
         for frame in self.frames:
             for pose in frame.poses:
-                trunk_img = pose.trunk_img.cpu().numpy()
-                if (
-                    trunk_img.shape[1] != 8 or trunk_img.shape[2] != 8
-                ):  # Resize to 8x8 if necessary
-                    trunk_img = cv2.resize(
-                        trunk_img.transpose(1, 2, 0), (8, 8)
-                    ).transpose(2, 0, 1)
-                trunk_colors.append(trunk_img.flatten())
+                trunk_hsv = pose.trunk_hsv
+                trunk_colors.append(trunk_hsv.flatten())
 
         # Convert to numpy array
         trunk_colors_np = np.array(trunk_colors)
 
         # Perform K-Means clustering
         kmeans = KMeans(n_clusters=2, random_state=0).fit(trunk_colors_np)
-
-        # # Visualize the cluster centers
-        # cluster_centers = kmeans.cluster_centers_.reshape(-1, 3, 8, 8)
-        # cluster_centers_rgb = []
-        # for center in cluster_centers:
-        #     center_hsv = (center * 255).astype(np.uint8).transpose(1, 2, 0)
-        #     center_rgb = cv2.cvtColor(center_hsv, cv2.COLOR_HSV2RGB)
-        #     cluster_centers_rgb.append(center_rgb)
-
-        # import matplotlib.pyplot as plt
-        # # Display the cluster centers
-        # fig, axes = plt.subplots(1, 2, figsize=(10, 5))
-        # for ax, center_rgb in zip(axes, cluster_centers_rgb):
-        #     ax.imshow(center_rgb)
-        #     ax.axis('off')
-        # plt.show()
-        # raise ValueError('debug')
-
-        # Update tracker_id based on the closest color cluster
+        cluster_centers = kmeans.cluster_centers_.reshape(
+            -1, SIZE_SQUARE_IMG, SIZE_SQUARE_IMG, 3
+        )
+        # Iterate through each frame to assign trunk_id
         for frame in self.frames:
+            # trunk_colors = []
+
             for pose in frame.poses:
-                trunk_img = pose.trunk_img.cpu().numpy()
-                if (
-                    trunk_img.shape[1] != 8 or trunk_img.shape[2] != 8
-                ):  # Resize to 8x8 if necessary
-                    trunk_img = cv2.resize(
-                        trunk_img.transpose(1, 2, 0), (8, 8)
-                    ).transpose(2, 0, 1)
-                pose_color_np = trunk_img.flatten().reshape(1, -1)
-                distances = kmeans.transform(pose_color_np)
-                closest_cluster = np.argmin(distances)
-                pose.trunk_id = closest_cluster
+                trunk_hsv = pose.trunk_hsv.flatten().reshape(1, -1)
+                distances = np.linalg.norm(kmeans.cluster_centers_ - trunk_hsv, axis=1)
+                pose.trunk_id = np.argmin(distances)
+                # trunk_colors.append(pose.trunk_id)
+
+        # Ensure unique trunk_id per frame
+        # if len(set(trunk_colors)) != len(trunk_colors):
+        #     raise RuntimeWarning("wrong poses number")
 
         return
 
