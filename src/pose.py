@@ -32,12 +32,14 @@ class Pose:
         self.bbox = bbox  # Add bbox to the constructor
         self.seq_length = keypoints.shape[0]  # Number of keypoints sequences
 
-        self.torso_hsv = self.polygon_to_square_img(self.get_torso_polygon())
-        self.trunk_hsv = self.polygon_to_square_img(self.get_trunk_polygon())
+        self.torso_polygon = self.get_torso_polygon()
+        self.trunk_polygon = self.get_trunk_polygon()
+        self.torso_hsv = self.polygon_to_square_img(self.torso_polygon)
+        self.trunk_hsv = self.polygon_to_square_img(self.trunk_polygon)
 
         self.compute_pct_skin()
 
-        # self.trunk_id = -1
+        self.trunk_id = -1
         return
 
     @staticmethod
@@ -79,8 +81,9 @@ class Pose:
 
     def compute_pct_skin(self):
         # Detect skin within the transformed torso area
-        skin_mask = self.detect_skin(self.torso_hsv)
-
+        skin_mask = cv2.inRange(
+            self.torso_hsv, COLOR_RANGES["skin"][0][0], COLOR_RANGES["skin"][0][1]
+        )
         # Calculate the number of skin pixels and total pixels
         skin_pixel_count = np.sum(skin_mask > 0)
         total_torso_pixels = SIZE_SQUARE_IMG * SIZE_SQUARE_IMG
@@ -90,41 +93,33 @@ class Pose:
 
         return
 
-    def detect_skin(self, hsv):
-        # Threshold the HSV image to get only skin colors
-        skin_mask = cv2.inRange(
-            hsv, COLOR_RANGES["skin"][0][0], COLOR_RANGES["skin"][0][1]
-        )
-
-        return skin_mask
-
     def get_torso_polygon(self):
         keypoints = self.keypoints[-1].cpu().numpy()
-        bbox_x, bbox_y, bbox_w, bbox_h = self.bbox
+        x, y, w, h = self.bbox
 
         left_shoulder = Pose.get_fallback_keypoint(
             keypoints[5],
             keypoints[7],
             keypoints[9],
-            bbox_corner=(int(bbox_x), int(bbox_y)),
+            bbox_corner=(int(x - w / 2), int(y - h / 4)),
         )
         right_shoulder = Pose.get_fallback_keypoint(
             keypoints[6],
             keypoints[8],
             keypoints[10],
-            bbox_corner=(int(bbox_x + bbox_w), int(bbox_y)),
+            bbox_corner=(int(x + w / 2), int(y - h / 4)),
         )
         left_hip = Pose.get_fallback_keypoint(
             keypoints[11],
             keypoints[13],
             keypoints[15],
-            bbox_corner=(int(bbox_x), int(bbox_y + bbox_h)),
+            bbox_corner=(int(x - w / 2), int(y)),
         )
         right_hip = Pose.get_fallback_keypoint(
             keypoints[12],
             keypoints[14],
             keypoints[16],
-            bbox_corner=(int(bbox_x + bbox_w), int(bbox_y + bbox_h)),
+            bbox_corner=(int(x + w / 2), int(y)),
         )
 
         if not all([left_shoulder, right_shoulder, left_hip, right_hip]):
@@ -134,23 +129,23 @@ class Pose:
 
     def get_trunk_polygon(self):
         keypoints = self.keypoints[-1].cpu().numpy()
-        bbox_x, bbox_y, bbox_w, bbox_h = self.bbox
+        x, y, w, h = self.bbox
 
         left_hip = Pose.get_fallback_keypoint(
-            keypoints[11], bbox_corner=(int(bbox_x), int(bbox_y + bbox_h / 2))
+            keypoints[11], bbox_corner=(int(x - w / 4), int(y))
         )
         right_hip = Pose.get_fallback_keypoint(
-            keypoints[12], bbox_corner=(int(bbox_x + bbox_w), int(bbox_y + bbox_h / 2))
+            keypoints[12], bbox_corner=(int(x + w / 4), int(y))
         )
         left_knee = Pose.get_fallback_keypoint(
             keypoints[13],
             keypoints[15],
-            bbox_corner=(int(bbox_x), int(bbox_y + bbox_h)),
+            bbox_corner=(int(x - w / 4), int(y + h / 4)),
         )
         right_knee = Pose.get_fallback_keypoint(
             keypoints[14],
             keypoints[16],
-            bbox_corner=(int(bbox_x + bbox_w), int(bbox_y + bbox_h)),
+            bbox_corner=(int(x + w / 4), int(y + h / 4)),
         )
 
         if not all([left_hip, right_hip, left_knee, right_knee]):
