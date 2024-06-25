@@ -6,6 +6,8 @@ from constants import (
     YOLO_POSE_MODEL,
     POSE_TRACKER,
     POSE_CONF_THRESHOLD,
+    SKIN_PCT_THRESHOLD,
+    BBOX_DIST_THRESHOLD,
 )
 
 
@@ -60,7 +62,10 @@ class Frame:
 
             # check if bbox is big enough
             x, y, w, h = box
-            if w * h > self.pixels.shape[0] * self.pixels.shape[1] * 0.1:
+            if (
+                w * h
+                > self.pixels.shape[0] * self.pixels.shape[1] * BBOX_DIST_THRESHOLD
+            ):
 
                 # Filter keypoints based on confidence
                 keypoint_conf = keypoint[
@@ -81,7 +86,7 @@ class Frame:
                     if len(track) >= MIN_APPEARING_FRAMES:
                         pose = Pose(torch.cat(track).cpu(), track_id, self, box)
 
-                        if pose.pct_skin > 0.1:
+                        if pose.pct_skin > SKIN_PCT_THRESHOLD:
                             # check if person is naked enough
                             # pose.classify_trunk_color()
                             self.poses.append(pose)

@@ -87,35 +87,17 @@ class Clip:
                     cv2.LINE_AA,
                 )
 
-                # # Draw the torso and trunk polygons
-                # if pose.torso_polygon is not None:
-                #     cv2.polylines(
-                #         marked_frame,
-                #         [pose.torso_polygon],
-                #         isClosed=True,
-                #         color=(75, 75, 75),
-                #         thickness=2,
-                #     )
-                # if pose.trunk_polygon is not None:
-                #     cv2.polylines(
-                #         marked_frame,
-                #         [pose.trunk_polygon],
-                #         isClosed=True,
-                #         color=(155, 155, 155),
-                #         thickness=2,
-                #     )
+                # frame_poses.append(
+                #     {
+                #         "id": pose.track_id,
+                #         "keypoints": keypoints.tolist(),
+                #         "pct_skin": pose.pct_skin,
+                #         "trunk": pose.trunk_id,
+                #         # "trunk_color": pose.trunk_color,
+                #     }
+                # )
 
-                frame_poses.append(
-                    {
-                        "id": pose.track_id,
-                        "keypoints": keypoints.tolist(),
-                        "pct_skin": pose.pct_skin,
-                        "trunk": pose.trunk_id,
-                        # "trunk_color": pose.trunk_color,
-                    }
-                )
-
-            poses_json_data.append({"frame": frame.idx, "poses": frame_poses})
+            # poses_json_data.append({"frame": frame.idx, "poses": frame_poses})
             out.write(marked_frame)
 
             if jpg:
@@ -126,10 +108,10 @@ class Clip:
 
         out.release()
 
-        with open(
-            os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.json"), "w"
-        ) as json_file:
-            json.dump(poses_json_data, json_file, indent=4)
+        # with open(
+        #     os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.json"), "w"
+        # ) as json_file:
+        #     json.dump(poses_json_data, json_file, indent=4)
 
         return
 
@@ -159,23 +141,61 @@ class Clip:
 
         # Perform K-Means clustering
         kmeans = KMeans(n_clusters=2, random_state=0).fit(trunk_colors_np)
-        cluster_centers = kmeans.cluster_centers_.reshape(
-            -1, SIZE_SQUARE_IMG, SIZE_SQUARE_IMG, 3
-        )
+        cluster_centers = kmeans.cluster_centers_
+
         # Iterate through each frame to assign trunk_id
         for frame in self.frames:
-            # trunk_colors = []
-
-            for pose in frame.poses:
+            if len(frame.poses) == 0:
+                continue
+            elif len(frame.poses) == 1:
+                pose = frame.poses[0]
                 trunk_hsv = pose.trunk_hsv.flatten().reshape(1, -1)
                 distances = np.linalg.norm(kmeans.cluster_centers_ - trunk_hsv, axis=1)
                 pose.trunk_id = np.argmin(distances)
-                # trunk_colors.append(pose.trunk_id)
+            else:
+                # Calculate distances
+                distances1 = np.linalg.norm(
+                    cluster_centers - frame.poses[0].trunk_hsv.flatten().reshape(1, -1),
+                    axis=1,
+                )
+                distances2 = np.linalg.norm(
+                    cluster_centers - frame.poses[1].trunk_hsv.flatten().reshape(1, -1),
+                    axis=1,
+                )
 
-        # Ensure unique trunk_id per frame
-        # if len(set(trunk_colors)) != len(trunk_colors):
-        #     raise RuntimeWarning("wrong poses number")
+                # Find the least-distant pair
+                if distances1[0] + distances2[1] < distances1[1] + distances2[0]:
+                    frame.poses[0].trunk_id = 0
+                    frame.poses[1].trunk_id = 1
+                else:
+                    frame.poses[0].trunk_id = 1
+                    frame.poses[1].trunk_id = 0
 
+        return
+
+    def drop_less_frequent_poses(self):
+        track_id_counts = defaultdict(int)
+        for frame in self.frames:
+            for pose in frame.poses:
+                track_id_counts[pose.track_id] += 1
+
+        min_required_count = self.frame_count * 2 / len(track_id_counts)
+
+        for frame in self.frames:
+            frame.poses = [
+                pose
+                for pose in frame.poses
+                if track_id_counts[pose.track_id] >= min_required_count
+            ]
+            if len(frame.poses) > 2:
+                # print(f"Frame {frame.idx} had {len(frame.poses)} poses.")
+                frame.poses = sorted(
+                    frame.poses, key=lambda p: -track_id_counts[p.track_id]
+                )[:2]
+            # elif len(frame.poses) < 2:
+            #     print(f"Frame {frame.idx} had {len(frame.poses)} poses.")
+            # else:
+            #     continue
         return
 
 
@@ -186,6 +206,7 @@ def run_extract_fighters(fn_video):
     # clip.generate_fighter_contour()
     clip.generate_fighter_poses()
 
+    clip.drop_less_frequent_poses()
     clip.bisection_trunk_color()
 
     clip.cap.release()

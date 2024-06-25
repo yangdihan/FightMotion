@@ -7,7 +7,7 @@ YOLO_THRESHOLD = 0.382
 RCNN_THRESHOLD = 0.9
 MIN_AREA_RATIO = 0.05
 BBOX_DIST_THRESHOLD = 0.1
-SKIN_PCT_THRESHOLD = 0.1
+SKIN_PCT_THRESHOLD = 0.2
 MASK_EXPAND_RATIO = 0.05
 POSE_CONF_THRESHOLD = 0.382
 POSE_CONF_THRESHOLD = 0.382
@@ -117,8 +117,8 @@ COLOR_RANGES = {
     ],
     "skin": [
         (
-            np.array([5, 50, 50], dtype=np.uint8),
-            np.array([20, 255, 255], dtype=np.uint8),
+            np.array([5, 35, 35], dtype=np.uint8),
+            np.array([25, 255, 255], dtype=np.uint8),
         )
     ],
     "white": [

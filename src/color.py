@@ -141,4 +141,4 @@ def color_classifier(img):
 # # Example usage, assuming COLOR_RANGES is defined
 # check_color_ranges_coverage()
 # # Example usage
-# plot_3d_color_spectrum("green")
+plot_3d_color_spectrum("skin")
