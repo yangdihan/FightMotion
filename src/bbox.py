@@ -74,15 +74,15 @@ class Bbox:
 
     #     return avg_distance / avg_diagonal
 
-    # def expand_bbox(self, expand_ratio):
-    #     x, y, w, h = self.xywh
-    #     x -= expand_ratio * w
-    #     y -= expand_ratio * h
-    #     w = (1 + 2 * expand_ratio) * w
-    #     h = (1 + 2 * expand_ratio) * h
-    #     x = int(max(0, x))
-    #     y = int(max(0, y))
-    #     w = int(min(self.frame.pixels.shape[1] - x, w))
-    #     h = int(min(self.frame.pixels.shape[0] - y, h))
+    def expand_bbox(self, expand_ratio):
+        x, y, w, h = self.xywh
+        x -= expand_ratio * w
+        y -= expand_ratio * h
+        w = (1 + 2 * expand_ratio) * w
+        h = (1 + 2 * expand_ratio) * h
+        x = int(max(0, x))
+        y = int(max(0, y))
+        w = int(min(self.frame.pixels.shape[1] - x, w))
+        h = int(min(self.frame.pixels.shape[0] - y, h))
 
-    #     return x, y, w, h
+        return x, y, w, h

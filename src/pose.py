@@ -40,6 +40,7 @@ class Pose:
         self.compute_pct_skin()
 
         self.trunk_id = -1
+        self.hmm_id = -1
         return
 
     @staticmethod
@@ -127,31 +128,6 @@ class Pose:
 
         return np.array([left_shoulder, right_shoulder, right_hip, left_hip], np.int32)
 
-    # def get_trunk_polygon(self):
-    #     keypoints = self.keypoints[-1].cpu().numpy()
-    #     x, y, w, h = self.bbox
-
-    #     left_hip = Pose.get_fallback_keypoint(
-    #         keypoints[11], bbox_corner=(int(x - w / 4), int(y))
-    #     )
-    #     right_hip = Pose.get_fallback_keypoint(
-    #         keypoints[12], bbox_corner=(int(x + w / 4), int(y))
-    #     )
-    #     left_knee = Pose.get_fallback_keypoint(
-    #         keypoints[13],
-    #         keypoints[15],
-    #         bbox_corner=(int(x - w / 4), int(y + h / 4)),
-    #     )
-    #     right_knee = Pose.get_fallback_keypoint(
-    #         keypoints[14],
-    #         keypoints[16],
-    #         bbox_corner=(int(x + w / 4), int(y + h / 4)),
-    #     )
-
-    #     if not all([left_hip, right_hip, left_knee, right_knee]):
-    #         return None
-
-    #     return np.array([left_hip, right_hip, right_knee, left_knee], np.int32)
     def get_trunk_polygon(self):
         keypoints = self.keypoints[-1].cpu().numpy()
         left_hip = keypoints[11]
@@ -187,27 +163,27 @@ class Pose:
             if not valid_points[2]:  # left_knee missing
                 center_x = (left_hip[0] + right_hip[0]) / 2
                 if right_knee[0] < center_x:
-                    left_knee = [left_hip[0], right_knee[1], 1]
+                    left_knee = [max(left_hip[0], right_hip[0]), right_knee[1], 1]
                 else:
-                    left_knee = [right_hip[0], right_knee[1], 1]
+                    left_knee = [min(left_hip[0], right_hip[0]), right_knee[1], 1]
             elif not valid_points[3]:  # right_knee missing
                 center_x = (left_hip[0] + right_hip[0]) / 2
                 if left_knee[0] < center_x:
-                    right_knee = [left_hip[0], left_knee[1], 1]
+                    right_knee = [max(left_hip[0], right_hip[0]), left_knee[1], 1]
                 else:
-                    right_knee = [right_hip[0], left_knee[1], 1]
+                    right_knee = [min(left_hip[0], right_hip[0]), left_knee[1], 1]
             elif not valid_points[0]:  # left_hip missing
                 center_x = (left_knee[0] + right_knee[0]) / 2
                 if right_hip[0] < center_x:
-                    left_hip = [right_knee[0], right_hip[1], 1]
+                    left_hip = [max(left_knee[0], right_knee[0]), right_hip[1], 1]
                 else:
-                    left_hip = [left_knee[0], right_hip[1], 1]
+                    left_hip = [min(left_knee[0], right_knee[0]), right_hip[1], 1]
             elif not valid_points[1]:  # right_hip missing
                 center_x = (left_knee[0] + right_knee[0]) / 2
                 if left_hip[0] < center_x:
-                    right_hip = [right_knee[0], left_hip[1], 1]
+                    right_hip = [max(left_knee[0], right_knee[0]), left_hip[1], 1]
                 else:
-                    right_hip = [left_knee[0], left_hip[1], 1]
+                    right_hip = [min(left_knee[0], right_knee[0]), left_hip[1], 1]
 
             polygon_vertices = np.array(
                 [left_hip[:2], right_hip[:2], right_knee[:2], left_knee[:2]]

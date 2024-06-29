@@ -4,6 +4,7 @@ import json
 from tqdm import tqdm
 import numpy as np
 from sklearn.cluster import KMeans
+from hmmlearn import hmm
 import torch
 import cv2
 
@@ -143,7 +144,7 @@ class Clip:
                     pose.keypoints[-1].cpu().numpy()
                 )  # Get the last set of keypoints
 
-                text = f"frame:{frame.idx}, trunk:{pose.trunk_id}, {int(pose.pct_skin*100)}%"
+                text = f"frame:{frame.idx}, trunk:{pose.trunk_id}, hmm: {pose.hmm_id}, {int(pose.pct_skin*100)}%"
                 x = int(np.median(keypoints[:, 0]))
                 y = int(np.median(keypoints[:, 1]))
                 cv2.putText(
@@ -183,9 +184,9 @@ class Clip:
                 y1 = int(y - h / 2)
                 y2 = int(y + h / 2)
 
-                if pose.trunk_id == 0:
+                if pose.hmm_id == 0:
                     fighter_0_frame[y1:y2, x1:x2] = marked_frame[y1:y2, x1:x2]
-                if pose.trunk_id == 1:
+                if pose.hmm_id == 1:
                     fighter_1_frame[y1:y2, x1:x2] = marked_frame[y1:y2, x1:x2]
 
             poses_json_data[frame.idx] = {
@@ -357,6 +358,51 @@ class Clip:
     #     copied_bbox.pose_yolo8 = bbox.pose_yolo8
     #     return copied_bbox
 
+    def hmm_track(self):
+        # Prepare the observations and states
+        observations = []
+        state_sequence = []
+
+        for frame in self.frames:
+            if len(frame.bboxes) == 2:
+                bbox1, bbox2 = frame.bboxes[0], frame.bboxes[1]
+                xy1 = bbox1.xywh[:2]
+                xy2 = bbox2.xywh[:2]
+                trunk_id1 = bbox1.pose_yolo8.trunk_id
+                trunk_id2 = bbox2.pose_yolo8.trunk_id
+                observations.append([*xy1, trunk_id1])
+                observations.append([*xy2, trunk_id2])
+                state_sequence.append([trunk_id1, trunk_id2])  # Initial states
+            elif len(frame.bboxes) == 1:
+                bbox = frame.bboxes[0]
+                xy = bbox.xywh[:2]
+                trunk_id = bbox.pose_yolo8.trunk_id
+                observations.append([*xy, trunk_id])
+                state_sequence.append([trunk_id])  # Initial state for single bbox
+
+        # Convert to numpy array
+        observations = np.array(observations)
+
+        # Create and fit the HMM model
+        model = hmm.GaussianHMM(n_components=2, covariance_type="diag", n_iter=100)
+        model.fit(observations)
+
+        # Use Viterbi to find the most probable state sequence
+        _, state_sequence = model.decode(observations, algorithm="viterbi")
+
+        # Assign hmm_id based on the most probable state sequence
+        idx = 0
+        for frame in self.frames:
+            if len(frame.bboxes) == 2:
+                frame.bboxes[0].pose_yolo8.hmm_id = state_sequence[idx]
+                frame.bboxes[1].pose_yolo8.hmm_id = state_sequence[idx + 1]
+                idx += 2
+            elif len(frame.bboxes) == 1:
+                frame.bboxes[0].pose_yolo8.hmm_id = state_sequence[idx]
+                idx += 1
+
+        return
+
 
 def run_extract_fighters(fn_video):
     clip = Clip(fn_video)
@@ -367,6 +413,8 @@ def run_extract_fighters(fn_video):
 
     clip.drop_less_frequent_poses()
     clip.bisection_trunk_color()
+
+    clip.hmm_track()
 
     clip.fill_missing_bbox()  # Fill missing bounding boxes
 
