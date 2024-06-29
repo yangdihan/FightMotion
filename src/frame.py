@@ -38,7 +38,7 @@ class Frame:
             verbose=False,
             conf=POSE_CONF_THRESHOLD,
             # conf=0.1,
-            iou=0.95,
+            iou=0.85,
             device="cuda",
         )[0]
         boxes = result.boxes.xywh.cpu()
