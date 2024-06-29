@@ -8,9 +8,12 @@ from constants import (
     POSE_CONF_THRESHOLD,
     SKIN_PCT_THRESHOLD,
     BBOX_DIST_THRESHOLD,
+    MIN_APPEARING_FRAMES,
+    MAX_MISSING_FRAMES,
+    MIN_KEYPOINTS,
 )
 
-
+from bbox import Bbox
 from pose import Pose
 
 
@@ -20,16 +23,13 @@ class Frame:
         self.pixels = pixels
         self.pixels_rgb = cv2.cvtColor(self.pixels, cv2.COLOR_BGR2RGB)
 
-        # self.bboxes = []
+        self.bboxes = []
         # self.contours = []
-        self.poses = []
+        # self.poses = []
 
         return
 
     def extract_fighter_pose(self, track_history, drop_counting):
-        MIN_APPEARING_FRAMES = 10
-        MAX_MISSING_FRAMES = 10
-        MIN_KEYPOINTS = 8
 
         result = YOLO_POSE_MODEL.track(
             self.pixels,
@@ -66,6 +66,7 @@ class Frame:
                 w * h
                 > self.pixels.shape[0] * self.pixels.shape[1] * BBOX_DIST_THRESHOLD
             ):
+                bbox = Bbox(box, self, False)
 
                 # Filter keypoints based on confidence
                 keypoint_conf = keypoint[
@@ -89,7 +90,9 @@ class Frame:
                         if pose.pct_skin > SKIN_PCT_THRESHOLD:
                             # check if person is naked enough
                             # pose.classify_trunk_color()
-                            self.poses.append(pose)
+                            # self.poses.append(pose)
+                            bbox.pose_yolo8 = pose
+                            self.bboxes.append(bbox)
 
         return track_history, drop_counting
 

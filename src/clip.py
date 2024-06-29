@@ -11,8 +11,11 @@ import cv2
 from constants import (
     POSE_TRACKER,
     SIZE_SQUARE_IMG,
+    MIN_APPEARING_FRAMES,
 )
 from frame import Frame
+from bbox import Bbox
+from pose import Pose
 
 
 DIR_IN = "D:/Documents/devs/fight_motion/data/raw/"
@@ -133,16 +136,14 @@ class Clip:
             fighter_1_frame = np.zeros_like(marked_frame)
             frame_poses = {}
 
-            for pose in frame.poses:
+            for bbox in frame.bboxes:
+                pose = bbox.pose_yolo8
                 marked_frame = pose.plot_skeleton_kpts(marked_frame)
                 keypoints = (
                     pose.keypoints[-1].cpu().numpy()
                 )  # Get the last set of keypoints
 
-                text = (
-                    # f"track:{pose.track_id}, trunk:{pose.trunk_id}, {int(pose.pct_skin*100)}%, {pose.trunk_color}"
-                    f"frame:{frame.idx}, trunk:{pose.trunk_id}, {int(pose.pct_skin*100)}%"
-                )
+                text = f"frame:{frame.idx}, trunk:{pose.trunk_id}, {int(pose.pct_skin*100)}%"
                 x = int(np.median(keypoints[:, 0]))
                 y = int(np.median(keypoints[:, 1]))
                 cv2.putText(
@@ -157,7 +158,7 @@ class Clip:
                 )
                 frame_poses[pose.trunk_id] = keypoints.tolist()
 
-                # # Draw the torso and trunk polygons
+                # Draw the torso and trunk polygons
                 if pose.torso_polygon is not None:
                     cv2.polylines(
                         marked_frame,
@@ -176,7 +177,7 @@ class Clip:
                     )
 
                 # Copy the box region of the pose to the respective fighter frame
-                x, y, w, h = pose.bbox
+                x, y, w, h = bbox.xywh
                 x1 = int(x - w / 2)
                 x2 = int(x + w / 2)
                 y1 = int(y - h / 2)
@@ -228,8 +229,8 @@ class Clip:
 
         # Collect all trunk colors from all frames and ensure consistent size
         for frame in self.frames:
-            for pose in frame.poses:
-                trunk_hsv = pose.trunk_hsv
+            for bbox in frame.bboxes:
+                trunk_hsv = bbox.pose_yolo8.trunk_hsv
                 trunk_colors.append(trunk_hsv.flatten())
 
         # Convert to numpy array
@@ -241,55 +242,120 @@ class Clip:
 
         # Iterate through each frame to assign trunk_id
         for frame in self.frames:
-            if len(frame.poses) == 0:
+            if len(frame.bboxes) == 0:
                 continue
-            elif len(frame.poses) == 1:
-                pose = frame.poses[0]
+            elif len(frame.bboxes) == 1:
+                pose = frame.bboxes[0].pose_yolo8
                 trunk_hsv = pose.trunk_hsv.flatten().reshape(1, -1)
                 distances = np.linalg.norm(kmeans.cluster_centers_ - trunk_hsv, axis=1)
                 pose.trunk_id = np.argmin(distances)
             else:
                 # Calculate distances
                 distances1 = np.linalg.norm(
-                    cluster_centers - frame.poses[0].trunk_hsv.flatten().reshape(1, -1),
+                    cluster_centers
+                    - frame.bboxes[0].pose_yolo8.trunk_hsv.flatten().reshape(1, -1),
                     axis=1,
                 )
                 distances2 = np.linalg.norm(
-                    cluster_centers - frame.poses[1].trunk_hsv.flatten().reshape(1, -1),
+                    cluster_centers
+                    - frame.bboxes[1].pose_yolo8.trunk_hsv.flatten().reshape(1, -1),
                     axis=1,
                 )
 
                 # Find the least-distant pair
                 if distances1[0] + distances2[1] < distances1[1] + distances2[0]:
-                    frame.poses[0].trunk_id = 0
-                    frame.poses[1].trunk_id = 1
+                    frame.bboxes[0].pose_yolo8.trunk_id = 0
+                    frame.bboxes[1].pose_yolo8.trunk_id = 1
                 else:
-                    frame.poses[0].trunk_id = 1
-                    frame.poses[1].trunk_id = 0
+                    frame.bboxes[0].pose_yolo8.trunk_id = 1
+                    frame.bboxes[1].pose_yolo8.trunk_id = 0
 
         return
 
     def drop_less_frequent_poses(self):
         track_id_counts = defaultdict(int)
         for frame in self.frames:
-            for pose in frame.poses:
-                track_id_counts[pose.track_id] += 1
+            for bbox in frame.bboxes:
+                track_id_counts[bbox.pose_yolo8.track_id] += 1
 
         min_required_count = self.frame_count * 2 / len(track_id_counts)
 
         for frame in self.frames:
-            frame.poses = [
-                pose
-                for pose in frame.poses
-                if track_id_counts[pose.track_id] >= min_required_count
+            frame.bboxes = [
+                bbox
+                for bbox in frame.bboxes
+                if track_id_counts[bbox.pose_yolo8.track_id] >= min_required_count
             ]
-            if len(frame.poses) > 2:
+            if len(frame.bboxes) > 2:
 
-                frame.poses = sorted(
-                    frame.poses, key=lambda p: -track_id_counts[p.track_id]
+                frame.bboxes = sorted(
+                    frame.bboxes, key=lambda b: -track_id_counts[b.pose_yolo8.track_id]
                 )[:2]
 
         return
+
+    def fill_missing_bbox(self):
+        for i, frame in enumerate(self.frames):
+            if len(frame.bboxes) < 2 and i > MIN_APPEARING_FRAMES:
+                # print(f"frame {i} has {len(frame.bboxes)} bboxes")
+                for trunk_id in [0, 1]:
+                    if not any(
+                        bbox.pose_yolo8.trunk_id == trunk_id for bbox in frame.bboxes
+                    ):
+                        prev_bbox = self.find_last_bbox(i, trunk_id)
+                        next_bbox = self.find_next_bbox(i, trunk_id)
+                        if prev_bbox is not None and next_bbox is not None:
+                            interpolated_bbox = self.interpolate_bbox(
+                                prev_bbox, next_bbox, frame
+                            )
+                            frame.bboxes.append(interpolated_bbox)
+                        elif prev_bbox is not None:
+                            frame.bboxes.append(prev_bbox.copy(True))
+                        elif next_bbox is not None:
+                            frame.bboxes.append(next_bbox.copy(True))
+
+        for frame in self.frames:
+            frame.bboxes = sorted(
+                frame.bboxes, key=lambda bbox: bbox.pose_yolo8.trunk_id
+            )
+        return
+
+    def find_last_bbox(self, current_idx, trunk_id):
+        for i in range(current_idx - 1, -1, -1):
+            for bbox in self.frames[i].bboxes:
+                if bbox.pose_yolo8.trunk_id == trunk_id:
+                    return bbox
+        return None
+
+    def find_next_bbox(self, current_idx, trunk_id):
+        for i in range(current_idx + 1, len(self.frames)):
+            for bbox in self.frames[i].bboxes:
+                if bbox.pose_yolo8.trunk_id == trunk_id:
+                    return bbox
+        return None
+
+    def interpolate_bbox(self, prev_bbox, next_bbox, frame):
+        prev_frame_idx = prev_bbox.frame.idx
+        next_frame_idx = next_bbox.frame.idx
+        if prev_frame_idx == next_frame_idx:
+            print(frame.idx, prev_frame_idx, next_frame_idx)
+        current_frame_idx = frame.idx
+
+        weight = (current_frame_idx - prev_frame_idx) / (
+            next_frame_idx - prev_frame_idx
+        )
+        interpolated_xywh = (1 - weight) * prev_bbox.xywh + weight * next_bbox.xywh
+
+        interpolated_bbox = Bbox(interpolated_xywh, frame, is_interpolated=True)
+        interpolated_bbox.pose_yolo8 = (
+            prev_bbox.pose_yolo8
+        )  # Assign the same pose to maintain consistency
+        return interpolated_bbox
+
+    # def copy_bbox(self, bbox, frame):
+    #     copied_bbox = Bbox(bbox.xywh, frame, is_interpolated=True)
+    #     copied_bbox.pose_yolo8 = bbox.pose_yolo8
+    #     return copied_bbox
 
 
 def run_extract_fighters(fn_video):
@@ -301,6 +367,8 @@ def run_extract_fighters(fn_video):
 
     clip.drop_less_frequent_poses()
     clip.bisection_trunk_color()
+
+    clip.fill_missing_bbox()  # Fill missing bounding boxes
 
     clip.cap.release()
     clip.output2()
