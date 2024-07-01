@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 import cv2
+import pyopenpose as op
 
 from constants import (
     YOLO_POSE_MODEL,
@@ -11,6 +12,7 @@ from constants import (
     MIN_APPEARING_FRAMES,
     MAX_MISSING_FRAMES,
     MIN_KEYPOINTS,
+    POSE_PAIRS,
 )
 
 from bbox import Bbox
@@ -27,9 +29,12 @@ class Frame:
         # self.contours = []
         # self.poses = []
 
+        self.pixels_fighters = [np.zeros_like(self.pixels), np.zeros_like(self.pixels)]
+
+        self.pose_fighters = [[], []]
         return
 
-    def extract_fighter_pose(self, track_history, drop_counting):
+    def extract_fighter_pose_yolo8(self, track_history, drop_counting):
 
         result = YOLO_POSE_MODEL.track(
             self.pixels,
@@ -95,6 +100,29 @@ class Frame:
                             self.bboxes.append(bbox)
 
         return track_history, drop_counting
+
+    def extract_fighter_pose_op(self):
+        return
+
+    def draw_keypoints(self, fighter_id):
+        marked_frame = self.pixels_fighters[fighter_id].copy()
+        # for person in keypoints:
+        # for pair in POSE_PAIRS:
+        #     partA = pair[0]
+        #     partB = pair[1]
+        keypoints = self.pose_fighters[fighter_id]
+        if keypoints is not None and len(keypoints) > 0:
+            # and keypoints[partA][2] > 0.1 and keypoints[partB][2] > 0.1:
+            for keypoint in keypoints:
+                x, y, confidence = keypoint
+                if confidence > 0.1:
+                    cv2.circle(marked_frame, (int(x), int(y)), 5, (0, 255, 0), -1)
+                # xA, yA = int(keypoints[partA][0]), int(keypoints[partA][1])
+                # xB, yB = int(keypoints[partB][0]), int(keypoints[partB][1])
+                # # cv2.line(marked_frame, (xA, yA), (xB, yB), (0, 255, 255), 2)
+                # cv2.circle(marked_frame, (xA, yA), 4, (0, 0, 255), -1)
+                # cv2.circle(marked_frame, (xB, yB), 4, (0, 0, 255), -1)
+        return marked_frame
 
     # def mask_frame_with_bbox(self, bboxes):
     #     mask = np.zeros_like(self.pixels)

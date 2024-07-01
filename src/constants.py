@@ -135,3 +135,50 @@ COLOR_RANGES = {
         (np.array([0, 0, 0], dtype=np.uint8), np.array([180, 255, 75], dtype=np.uint8))
     ],
 }
+
+# OpenPose parameters
+OPENPOSE_PARAM = {
+    "model_folder": "D:\Apps\OpenPose\openpose_source\openpose\models",  # Update this path to your OpenPose models folder
+    # "keypoint_scale": 1,  # Scale the keypoints to the original image
+    "tracking": 1,  # Enable tracking
+    "number_people_max": 1,
+    # "smooth": 1  # Enable smoothing
+    "model_pose": "BODY_25",
+    # Disable hand keypoints
+    "hand": False,
+    # Disable face keypoints
+    "face": False,
+    # Enable body keypoints detection
+    "body": 1,
+    # Utilize GPU
+    "num_gpu": 1,
+    # Start from GPU 0
+    "num_gpu_start": 0,
+    # Enable rendering
+    "render_pose": 1,
+}
+
+POSE_PAIRS = [
+    (0, 1),
+    (1, 2),
+    (2, 3),
+    (3, 4),  # Head
+    (1, 5),
+    (5, 6),
+    (6, 7),  # Left arm
+    (1, 8),
+    (8, 9),
+    (9, 10),  # Right arm
+    (1, 11),
+    (11, 12),
+    (12, 13),
+    (13, 14),
+    (14, 19),
+    (19, 20),  # Torso + Left leg
+    (1, 15),
+    (15, 16),
+    (16, 17),
+    (17, 18),
+    (18, 21),
+    (21, 22),  # Right leg
+]

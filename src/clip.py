@@ -7,12 +7,13 @@ from sklearn.cluster import KMeans
 from hmmlearn import hmm
 import torch
 import cv2
-
+import pyopenpose as op
 
 from constants import (
     POSE_TRACKER,
-    SIZE_SQUARE_IMG,
+    # SIZE_SQUARE_IMG,
     MIN_APPEARING_FRAMES,
+    OPENPOSE_PARAM,
 )
 from frame import Frame
 from bbox import Bbox
@@ -45,6 +46,8 @@ class Clip:
             if not ret:
                 break
             self.frames[frame_idx] = Frame(frame_idx, pixels)
+
+        self.cap.release()
         return
 
     def read_frame(self, frame_idx):
@@ -113,70 +116,136 @@ class Clip:
 
         return
 
+    # def output_2bbox(self):
+    #     out_fighter_0 = cv2.VideoWriter(
+    #         os.path.join(DIR_OUT, f"{self.clip_name}_fighter_0.mp4"),
+    #         cv2.VideoWriter_fourcc(*"mp4v"),
+    #         self.fps,
+    #         (self.frame_width, self.frame_height),
+    #     )
+
+    #     out_fighter_1 = cv2.VideoWriter(
+    #         os.path.join(DIR_OUT, f"{self.clip_name}_fighter_1.mp4"),
+    #         cv2.VideoWriter_fourcc(*"mp4v"),
+    #         self.fps,
+    #         (self.frame_width, self.frame_height),
+    #     )
+
+    #     # poses_json_data = {}
+
+    #     print("Exporting frames...")
+    #     for frame in tqdm(self.frames):
+    #         # marked_frame = frame.pixels.copy()
+    #         fighter_0_frame = np.zeros_like(frame.pixels)
+    #         fighter_1_frame = np.zeros_like(frame.pixels)
+    #         # frame_poses = {}
+
+    #         for bbox in frame.bboxes:
+    #             pose = bbox.pose_yolo8
+    #             # marked_frame = pose.plot_skeleton_kpts(marked_frame)
+    #             # keypoints = (
+    #             #     pose.keypoints[-1].cpu().numpy()
+    #             # )  # Get the last set of keypoints
+
+    #             # text = f"frame:{frame.idx}, trunk:{pose.trunk_id}, hmm: {pose.hmm_id}, {int(pose.pct_skin*100)}%"
+    #             # x = int(np.median(keypoints[:, 0]))
+    #             # y = int(np.median(keypoints[:, 1]))
+    #             # cv2.putText(
+    #             #     marked_frame,
+    #             #     text,
+    #             #     (x, y + 15),
+    #             #     cv2.FONT_HERSHEY_SIMPLEX,
+    #             #     0.5,
+    #             #     (0, 0, 255),
+    #             #     1,
+    #             #     cv2.LINE_AA,
+    #             # )
+    #             # frame_poses[pose.trunk_id] = keypoints.tolist()
+
+    #             # # Draw the torso and trunk polygons
+    #             # if pose.torso_polygon is not None:
+    #             #     cv2.polylines(
+    #             #         marked_frame,
+    #             #         [pose.torso_polygon],
+    #             #         isClosed=True,
+    #             #         color=(75, 75, 75),
+    #             #         thickness=2,
+    #             #     )
+    #             # if pose.trunk_polygon is not None:
+    #             #     cv2.polylines(
+    #             #         marked_frame,
+    #             #         [pose.trunk_polygon],
+    #             #         isClosed=True,
+    #             #         color=(155, 155, 155),
+    #             #         thickness=2,
+    #             #     )
+
+    #             # Copy the box region of the pose to the respective fighter frame
+    #             x, y, w, h = bbox.xywh
+    #             x1 = int(x - w / 2)
+    #             x2 = int(x + w / 2)
+    #             y1 = int(y - h / 2)
+    #             y2 = int(y + h / 2)
+
+    #             if pose.hmm_id == 0:
+    #                 fighter_0_frame[y1:y2, x1:x2] = frame.pixels[y1:y2, x1:x2]
+    #             if pose.hmm_id == 1:
+    #                 fighter_1_frame[y1:y2, x1:x2] = frame.pixels[y1:y2, x1:x2]
+
+    #         # poses_json_data[frame.idx] = {
+    #         #     int(trunk_id): keypoints for trunk_id, keypoints in frame_poses.items()
+    #         # }
+    #         # cv2.imwrite(
+    #         #     os.path.join(DIR_OUT, f"{self.clip_name}_frame{frame.idx}_trunk0.jpg"),
+    #         #     fighter_0_frame,
+    #         # )
+    #         # cv2.imwrite(
+    #         #     os.path.join(DIR_OUT, f"{self.clip_name}_frame{frame.idx}_trunk1.jpg"),
+    #         #     fighter_1_frame,
+    #         # )
+    #         out_fighter_0.write(fighter_0_frame)
+    #         out_fighter_1.write(fighter_1_frame)
+
+    #     out_fighter_0.release()
+    #     out_fighter_1.release()
+
+    #     # with open(
+    #     #     os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.json"), "w"
+    #     # ) as json_file:
+    #     #     json.dump(poses_json_data, json_file, indent=4)
+
+    #     return
+
     def output2(self):
         out_fighter_0 = cv2.VideoWriter(
-            os.path.join(DIR_OUT, f"{self.clip_name}_fighter_0.mp4"),
+            os.path.join(DIR_OUT, f"{self.clip_name}_fighter_op_0.mp4"),
             cv2.VideoWriter_fourcc(*"mp4v"),
             self.fps,
             (self.frame_width, self.frame_height),
         )
 
         out_fighter_1 = cv2.VideoWriter(
-            os.path.join(DIR_OUT, f"{self.clip_name}_fighter_1.mp4"),
+            os.path.join(DIR_OUT, f"{self.clip_name}_fighter_op_1.mp4"),
             cv2.VideoWriter_fourcc(*"mp4v"),
             self.fps,
             (self.frame_width, self.frame_height),
         )
 
-        poses_json_data = {}
-
         print("Exporting frames...")
         for frame in tqdm(self.frames):
-            marked_frame = frame.pixels.copy()
-            fighter_0_frame = np.zeros_like(marked_frame)
-            fighter_1_frame = np.zeros_like(marked_frame)
-            frame_poses = {}
+            out_fighter_0.write(frame.draw_keypoints(0))
+            out_fighter_1.write(frame.draw_keypoints(1))
+
+        out_fighter_0.release()
+        out_fighter_1.release()
+        return
+
+    def split_2_fighters(self):
+
+        print("Splitting fighters...")
+        for frame in tqdm(self.frames):
 
             for bbox in frame.bboxes:
-                pose = bbox.pose_yolo8
-                marked_frame = pose.plot_skeleton_kpts(marked_frame)
-                keypoints = (
-                    pose.keypoints[-1].cpu().numpy()
-                )  # Get the last set of keypoints
-
-                text = f"frame:{frame.idx}, trunk:{pose.trunk_id}, hmm: {pose.hmm_id}, {int(pose.pct_skin*100)}%"
-                x = int(np.median(keypoints[:, 0]))
-                y = int(np.median(keypoints[:, 1]))
-                cv2.putText(
-                    marked_frame,
-                    text,
-                    (x, y + 15),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 0, 255),
-                    1,
-                    cv2.LINE_AA,
-                )
-                frame_poses[pose.trunk_id] = keypoints.tolist()
-
-                # Draw the torso and trunk polygons
-                if pose.torso_polygon is not None:
-                    cv2.polylines(
-                        marked_frame,
-                        [pose.torso_polygon],
-                        isClosed=True,
-                        color=(75, 75, 75),
-                        thickness=2,
-                    )
-                if pose.trunk_polygon is not None:
-                    cv2.polylines(
-                        marked_frame,
-                        [pose.trunk_polygon],
-                        isClosed=True,
-                        color=(155, 155, 155),
-                        thickness=2,
-                    )
-
                 # Copy the box region of the pose to the respective fighter frame
                 x, y, w, h = bbox.xywh
                 x1 = int(x - w / 2)
@@ -184,42 +253,19 @@ class Clip:
                 y1 = int(y - h / 2)
                 y2 = int(y + h / 2)
 
-                if pose.hmm_id == 0:
-                    fighter_0_frame[y1:y2, x1:x2] = marked_frame[y1:y2, x1:x2]
-                if pose.hmm_id == 1:
-                    fighter_1_frame[y1:y2, x1:x2] = marked_frame[y1:y2, x1:x2]
-
-            poses_json_data[frame.idx] = {
-                int(trunk_id): keypoints for trunk_id, keypoints in frame_poses.items()
-            }
-            cv2.imwrite(
-                os.path.join(DIR_OUT, f"{self.clip_name}_frame{frame.idx}_trunk0.jpg"),
-                fighter_0_frame,
-            )
-            cv2.imwrite(
-                os.path.join(DIR_OUT, f"{self.clip_name}_frame{frame.idx}_trunk1.jpg"),
-                fighter_1_frame,
-            )
-            out_fighter_0.write(fighter_0_frame)
-            out_fighter_1.write(fighter_1_frame)
-
-        out_fighter_0.release()
-        out_fighter_1.release()
-
-        with open(
-            os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.json"), "w"
-        ) as json_file:
-            json.dump(poses_json_data, json_file, indent=4)
+                frame.pixels_fighters[bbox.pose_yolo8.hmm_id][y1:y2, x1:x2] = (
+                    frame.pixels[y1:y2, x1:x2]
+                )
 
         return
 
-    def generate_fighter_poses(self):
+    def generate_fighters_poses(self):
         track_history = defaultdict(lambda: [])
         drop_counting = defaultdict(lambda: 0)
 
         print("Tracking Poses...")
         for frame in tqdm(self.frames):
-            track_history, drop_counting = frame.extract_fighter_pose(
+            track_history, drop_counting = frame.extract_fighter_pose_yolo8(
                 track_history, drop_counting
             )
 
@@ -403,13 +449,31 @@ class Clip:
 
         return
 
+    def generate_2fighter_poses(self):
+        opWrapper = op.WrapperPython()
+        opWrapper.configure(OPENPOSE_PARAM)
+        opWrapper.start()
+
+        datum = op.Datum()
+
+        print("Tracking 2 fighters separately with OpenPose...")
+        for frame in tqdm(self.frames):
+            for i in [0, 1]:
+                datum.cvInputData = frame.pixels_fighters[i]
+                opWrapper.emplaceAndPop(op.VectorDatum([datum]))
+                keypoints = datum.poseKeypoints
+                if keypoints is not None and len(keypoints) > 0:
+                    frame.pose_fighters[i] = keypoints[0]
+
+        return
+
 
 def run_extract_fighters(fn_video):
     clip = Clip(fn_video)
 
     # clip.generate_fighter_bboxes()
     # clip.generate_fighter_contour()
-    clip.generate_fighter_poses()
+    clip.generate_fighters_poses()
 
     clip.drop_less_frequent_poses()
     clip.bisection_trunk_color()
@@ -418,8 +482,12 @@ def run_extract_fighters(fn_video):
 
     clip.fill_missing_bbox()  # Fill missing bounding boxes
 
-    clip.cap.release()
+    clip.split_2_fighters()
+
+    clip.generate_2fighter_poses()
+
     clip.output2()
+
     cv2.destroyAllWindows()
     return
 
