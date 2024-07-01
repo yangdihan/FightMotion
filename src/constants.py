@@ -137,48 +137,67 @@ COLOR_RANGES = {
 }
 
 # OpenPose parameters
+# 1. BODY_25
+# Description: Tracks 25 body keypoints including the major joints and extremities.
+# Keypoints Tracked:
+# 0-17: Head, neck, shoulders, elbows, wrists, hips, knees, ankles
+# 18-23: Eyes, ears
+# 24: Nose
+# 2. COCO (BODY_18)
+# Description: Tracks 18 body keypoints based on the COCO dataset.
+# Keypoints Tracked:
+# 0: Nose
+# 1-2: Eyes (left, right)
+# 3-4: Ears (left, right)
+# 5-10: Shoulders, elbows, wrists (left, right)
+# 11-16: Hips, knees, ankles (left, right)
+# 3. MPI (BODY_15)
+# Description: Tracks 15 body keypoints based on the MPII dataset.
+# Keypoints Tracked:
+# 0-14: Head, neck, shoulders, elbows, wrists, hips, knees, ankles
 OPENPOSE_PARAM = {
     "model_folder": "D:\Apps\OpenPose\openpose_source\openpose\models",  # Update this path to your OpenPose models folder
-    # "keypoint_scale": 1,  # Scale the keypoints to the original image
-    "tracking": 1,  # Enable tracking
-    "number_people_max": 1,
-    # "smooth": 1  # Enable smoothing
     "model_pose": "BODY_25",
+    # "keypoint_scale": 1,  # Scale the keypoints to the original image
+    "number_people_max": 1,
+    "tracking": 1,  # Enable tracking
+    # "smooth": 1  # Enable smoothing
     # Disable hand keypoints
-    "hand": False,
-    # Disable face keypoints
-    "face": False,
-    # Enable body keypoints detection
-    "body": 1,
+    # "hand": False,
+    # # Disable face keypoints
+    # "face": False,
+    # # Enable body keypoints detection
+    # "body": 1,
     # Utilize GPU
     "num_gpu": 1,
     # Start from GPU 0
     "num_gpu_start": 0,
-    # Enable rendering
-    "render_pose": 1,
+    # # Enable rendering
+    # "render_pose": 1,
 }
 
-POSE_PAIRS = [
-    (0, 1),
-    (1, 2),
-    (2, 3),
-    (3, 4),  # Head
-    (1, 5),
-    (5, 6),
-    (6, 7),  # Left arm
+POSE_PAIRS_25 = [
     (1, 8),
+    (1, 2),
+    (1, 5),
+    (2, 3),
+    (3, 4),
+    (5, 6),
+    (6, 7),
     (8, 9),
-    (9, 10),  # Right arm
-    (1, 11),
-    (11, 12),
+    (9, 10),
+    (10, 11),
+    (8, 12),
     (12, 13),
     (13, 14),
+    (0, 15),
+    (15, 17),
+    (0, 16),
+    (16, 18),
     (14, 19),
-    (19, 20),  # Torso + Left leg
-    (1, 15),
-    (15, 16),
-    (16, 17),
-    (17, 18),
-    (18, 21),
-    (21, 22),  # Right leg
+    (19, 20),
+    (14, 21),
+    (11, 22),
+    (22, 23),
+    (11, 24),
 ]

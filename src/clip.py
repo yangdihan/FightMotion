@@ -253,9 +253,10 @@ class Clip:
                 y1 = int(y - h / 2)
                 y2 = int(y + h / 2)
 
-                frame.pixels_fighters[bbox.pose_yolo8.hmm_id][y1:y2, x1:x2] = (
+                frame.pixels_2fighters[bbox.pose_yolo8.hmm_id][y1:y2, x1:x2] = (
                     frame.pixels[y1:y2, x1:x2]
                 )
+                frame.trunk_2fighters[bbox.pose_yolo8.hmm_id] = bbox.pose_yolo8.trunk_id
 
         return
 
@@ -344,28 +345,60 @@ class Clip:
     def fill_missing_bbox(self):
         for i, frame in enumerate(self.frames):
             if len(frame.bboxes) < 2 and i > MIN_APPEARING_FRAMES:
-                # print(f"frame {i} has {len(frame.bboxes)} bboxes")
                 for trunk_id in [0, 1]:
                     if not any(
-                        bbox.pose_yolo8.trunk_id == trunk_id for bbox in frame.bboxes
+                        bbox.pose_yolo8.hmm_id == trunk_id for bbox in frame.bboxes
                     ):
                         prev_bbox = self.find_last_bbox(i, trunk_id)
                         next_bbox = self.find_next_bbox(i, trunk_id)
                         if prev_bbox is not None and next_bbox is not None:
-                            interpolated_bbox = self.interpolate_bbox(
+                            interpolated_bbox = self.hull_bbox(
                                 prev_bbox, next_bbox, frame
                             )
-                            frame.bboxes.append(interpolated_bbox)
+                            for j in range(
+                                prev_bbox.frame.idx + 1, next_bbox.frame.idx
+                            ):
+                                self.frames[j].bboxes.append(
+                                    interpolated_bbox.copy(True)
+                                )
                         elif prev_bbox is not None:
-                            frame.bboxes.append(prev_bbox.copy(True))
+                            for j in range(prev_bbox.frame.idx + 1, len(self.frames)):
+                                if len(self.frames[j].bboxes) < 2:
+                                    self.frames[j].bboxes.append(prev_bbox.copy(True))
+                                else:
+                                    break
                         elif next_bbox is not None:
-                            frame.bboxes.append(next_bbox.copy(True))
+                            for j in range(next_bbox.frame.idx - 1, -1, -1):
+                                if len(self.frames[j].bboxes) < 2:
+                                    self.frames[j].bboxes.append(next_bbox.copy(True))
+                                else:
+                                    break
 
         for frame in self.frames:
-            frame.bboxes = sorted(
-                frame.bboxes, key=lambda bbox: bbox.pose_yolo8.trunk_id
-            )
+            frame.bboxes = sorted(frame.bboxes, key=lambda bbox: bbox.pose_yolo8.hmm_id)
         return
+
+    def hull_bbox(self, bbox1, bbox2, frame):
+        x1, y1, w1, h1 = bbox1.xywh
+        x2, y2, w2, h2 = bbox2.xywh
+
+        x1_min = min(x1 - w1 / 2, x2 - w2 / 2)
+        y1_min = min(y1 - h1 / 2, y2 - h2 / 2)
+        x2_max = max(x1 + w1 / 2, x2 + w2 / 2)
+        y2_max = max(y1 + h1 / 2, y2 + h2 / 2)
+
+        center_x = (x1_min + x2_max) / 2
+        center_y = (y1_min + y2_max) / 2
+        width = x2_max - x1_min
+        height = y2_max - y1_min
+
+        new_xywh = [center_x, center_y, width, height]
+        new_bbox = Bbox(new_xywh, frame, is_interpolated=True)
+        new_bbox.pose_yolo8 = (
+            bbox1.pose_yolo8
+        )  # Assign the same pose to maintain consistency
+
+        return new_bbox
 
     def find_last_bbox(self, current_idx, trunk_id):
         for i in range(current_idx - 1, -1, -1):
@@ -380,29 +413,6 @@ class Clip:
                 if bbox.pose_yolo8.trunk_id == trunk_id:
                     return bbox
         return None
-
-    def interpolate_bbox(self, prev_bbox, next_bbox, frame):
-        prev_frame_idx = prev_bbox.frame.idx
-        next_frame_idx = next_bbox.frame.idx
-        if prev_frame_idx == next_frame_idx:
-            print(frame.idx, prev_frame_idx, next_frame_idx)
-        current_frame_idx = frame.idx
-
-        weight = (current_frame_idx - prev_frame_idx) / (
-            next_frame_idx - prev_frame_idx
-        )
-        interpolated_xywh = (1 - weight) * prev_bbox.xywh + weight * next_bbox.xywh
-
-        interpolated_bbox = Bbox(interpolated_xywh, frame, is_interpolated=True)
-        interpolated_bbox.pose_yolo8 = (
-            prev_bbox.pose_yolo8
-        )  # Assign the same pose to maintain consistency
-        return interpolated_bbox
-
-    # def copy_bbox(self, bbox, frame):
-    #     copied_bbox = Bbox(bbox.xywh, frame, is_interpolated=True)
-    #     copied_bbox.pose_yolo8 = bbox.pose_yolo8
-    #     return copied_bbox
 
     def hmm_track(self):
         # Prepare the observations and states
@@ -458,12 +468,13 @@ class Clip:
 
         print("Tracking 2 fighters separately with OpenPose...")
         for frame in tqdm(self.frames):
-            for i in [0, 1]:
-                datum.cvInputData = frame.pixels_fighters[i]
-                opWrapper.emplaceAndPop(op.VectorDatum([datum]))
-                keypoints = datum.poseKeypoints
-                if keypoints is not None and len(keypoints) > 0:
-                    frame.pose_fighters[i] = keypoints[0]
+            frame.extract_fighter_pose_op(datum, opWrapper)
+            # for i in [0, 1]:
+            #     datum.cvInputData = frame.pixels_2fighters[i]
+            #     opWrapper.emplaceAndPop(op.VectorDatum([datum]))
+            #     keypoints = datum.poseKeypoints
+            #     if keypoints is not None and len(keypoints) > 0:
+            #         frame.pose_2fighters[i] = keypoints[0]
 
         return
 

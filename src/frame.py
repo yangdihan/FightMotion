@@ -5,6 +5,7 @@ import pyopenpose as op
 
 from constants import (
     YOLO_POSE_MODEL,
+    OPENPOSE_PARAM,
     POSE_TRACKER,
     POSE_CONF_THRESHOLD,
     SKIN_PCT_THRESHOLD,
@@ -12,7 +13,7 @@ from constants import (
     MIN_APPEARING_FRAMES,
     MAX_MISSING_FRAMES,
     MIN_KEYPOINTS,
-    POSE_PAIRS,
+    POSE_PAIRS_25,
 )
 
 from bbox import Bbox
@@ -25,13 +26,15 @@ class Frame:
         self.pixels = pixels
         self.pixels_rgb = cv2.cvtColor(self.pixels, cv2.COLOR_BGR2RGB)
 
+        # datum = None
+
         self.bboxes = []
         # self.contours = []
         # self.poses = []
 
-        self.pixels_fighters = [np.zeros_like(self.pixels), np.zeros_like(self.pixels)]
-
-        self.pose_fighters = [[], []]
+        self.pixels_2fighters = [np.zeros_like(self.pixels), np.zeros_like(self.pixels)]
+        self.trunk_2fighters = [-1, -1]
+        self.pose_2fighters = [None, None]
         return
 
     def extract_fighter_pose_yolo8(self, track_history, drop_counting):
@@ -101,27 +104,49 @@ class Frame:
 
         return track_history, drop_counting
 
-    def extract_fighter_pose_op(self):
+    def extract_fighter_pose_op(self, datum, opWrapper):
+        for i in [0, 1]:
+            datum.cvInputData = self.pixels_2fighters[i]
+            opWrapper.emplaceAndPop(op.VectorDatum([datum]))
+            keypoints = datum.poseKeypoints
+            if keypoints is not None and len(keypoints) > 0:
+                self.pose_2fighters[i] = keypoints[0]
         return
 
     def draw_keypoints(self, fighter_id):
-        marked_frame = self.pixels_fighters[fighter_id].copy()
-        # for person in keypoints:
-        # for pair in POSE_PAIRS:
-        #     partA = pair[0]
-        #     partB = pair[1]
-        keypoints = self.pose_fighters[fighter_id]
+        marked_frame = self.pixels_2fighters[fighter_id].copy()
+        keypoints = self.pose_2fighters[fighter_id]
+
         if keypoints is not None and len(keypoints) > 0:
-            # and keypoints[partA][2] > 0.1 and keypoints[partB][2] > 0.1:
-            for keypoint in keypoints:
+            # Draw the keypoints
+            for i, keypoint in enumerate(keypoints):
                 x, y, confidence = keypoint
-                if confidence > 0.1:
-                    cv2.circle(marked_frame, (int(x), int(y)), 5, (0, 255, 0), -1)
-                # xA, yA = int(keypoints[partA][0]), int(keypoints[partA][1])
-                # xB, yB = int(keypoints[partB][0]), int(keypoints[partB][1])
-                # # cv2.line(marked_frame, (xA, yA), (xB, yB), (0, 255, 255), 2)
-                # cv2.circle(marked_frame, (xA, yA), 4, (0, 0, 255), -1)
-                # cv2.circle(marked_frame, (xB, yB), 4, (0, 0, 255), -1)
+                color = (
+                    0,
+                    255,
+                    0,
+                    int(255 * confidence),
+                )  # RGBA color with alpha based on confidence
+                overlay = marked_frame.copy()
+                cv2.circle(overlay, (int(x), int(y)), 5, color, -1)
+                cv2.addWeighted(
+                    overlay, confidence, marked_frame, 1 - confidence, 0, marked_frame
+                )
+
+            # Draw the skeleton
+            for pair in POSE_PAIRS_25:
+                partA, partB = pair
+                if keypoints[partA][2] > 0.1 and keypoints[partB][2] > 0.1:
+                    xA, yA, _ = keypoints[partA]
+                    xB, yB, _ = keypoints[partB]
+                    cv2.line(
+                        marked_frame,
+                        (int(xA), int(yA)),
+                        (int(xB), int(yB)),
+                        (0, 0, 0),
+                        2,
+                    )
+
         return marked_frame
 
     # def mask_frame_with_bbox(self, bboxes):
