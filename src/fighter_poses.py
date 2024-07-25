@@ -13,21 +13,42 @@ import numpy as np
 import cv2
 import pyopenpose as op
 
+video_path = "D:/Documents/devs/fight_motion/data/interim/aldo_holloway_angle1_fighter_0.mp4"  # Update this path to your video file
+
+cap = cv2.VideoCapture(video_path)
+
+
+# Get video properties
+fps = int(cap.get(cv2.CAP_PROP_FPS))
+frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+# Define the codec and create VideoWriter object
+out = cv2.VideoWriter(
+    "D:/Documents/devs/fight_motion/data/interim/aldo_holloway_angle1_fighter_0_openpose.mp4",
+    cv2.VideoWriter_fourcc(*"mp4v"),
+    fps,
+    (frame_width, frame_height),
+)
 
 # OpenPose parameters
-params = dict()
-params["model_folder"] = (
-    "D:\Apps\OpenPose\openpose_source\openpose\models"  # Update the path to your models folder
-)
-params["model_pose"] = "BODY_25"
+params = {
+    "model_folder": "D:\Apps\OpenPose\openpose_source\openpose\models",  # Update this path to your OpenPose models folder
+    # "keypoint_scale": 1,  # Scale the keypoints to the original image
+    "tracking": 1,  # Enable tracking
+    "number_people_max": 1,
+    # "smooth": 1  # Enable smoothing
+}
+params["model_pose"] = "MPI"  # body 15
 params["hand"] = False  # Disable hand keypoints
 params["face"] = False  # Disable face keypoints
 params["body"] = 1  # Enable body keypoints detection
 # params["tracking"] = 1  # Enable tracking
-params["net_resolution"] = "-1x368"  # Use the appropriate resolution
+# params["net_resolution"] = "-1x368"  # Use the appropriate resolution
 params["num_gpu"] = 1  # Utilize GPU
 params["num_gpu_start"] = 0  # Start from GPU 0
-params["render_pose"] = 1  # Enable rendering
+# params["render_pose"] = 1  # Enable rendering
+
 
 # Initialize OpenPose
 opWrapper = op.WrapperPython()
@@ -35,60 +56,42 @@ opWrapper.configure(params)
 opWrapper.start()
 
 
-# Class to store skeletal movements
-class FighterPose:
-    def __init__(self, frame_idx, pose_keypoints):
-        self.frame_idx = frame_idx
-        self.pose_keypoints = pose_keypoints
-
-
-# Function to extract pose keypoints from a frame
-def extract_pose_keypoints(frame):
+# Function to extract pose keypoints
+def extract_pose(frame):
     datum = op.Datum()
     datum.cvInputData = frame
     opWrapper.emplaceAndPop(op.VectorDatum([datum]))
-    return datum.poseKeypoints, datum.cvOutputData
+    return datum
 
 
-# Load the video
-video_path = "D:/Documents/devs/fight_motion/data/interim/output_video_contour.mp4"  # Update this to your video file path
-cap = cv2.VideoCapture(video_path)
+# Function to draw keypoints on the frame
+def draw_keypoints(frame, keypoints):
+    for person in keypoints:
+        for i in range(len(person)):
+            x, y, confidence = person[i]
+            if confidence > 0.1:
+                cv2.circle(frame, (int(x), int(y)), 5, (0, 255, 0), -1)
+    return frame
 
-# Data structure to store keypoints
-fighters_keypoints = []
 
-# Video writer to save the output video
-output_path = "D:/Documents/devs/fight_motion/data/interim/output_video_pose.mp4"
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-out = cv2.VideoWriter(
-    output_path,
-    fourcc,
-    30.0,
-    (int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))),
-)
-
-frame_idx = 0
-
+# Process the video
 while cap.isOpened():
     ret, frame = cap.read()
     if not ret:
         break
 
-    keypoints, output_frame = extract_pose_keypoints(frame)
-    # if keypoints is not None and len(keypoints) == 2:
-    if keypoints is not None:
-        fighters_keypoints.append(FighterPose(frame_idx, keypoints.tolist()))
+    # Extract 2D pose keypoints
+    datum = extract_pose(frame)
+    keypoints_2d = datum.poseKeypoints
+    print("frame")
+    # Draw keypoints on the frame
+    if keypoints_2d is not None:
+        frame = draw_keypoints(frame, keypoints_2d)
 
-        # Write the output frame with overlays to video
-        out.write(output_frame)
+    # Write the frame with keypoints
+    out.write(frame)
 
-    frame_idx += 1
-
+# Release everything if job is finished
 cap.release()
 out.release()
-
-# Save the keypoints data
-# with open("fighters_keypoints.json", "w") as f:
-#     json.dump([fp.__dict__ for fp in fighters_keypoints], f)
-
-# print("Keypoints extraction and video export completed.")
+cv2.destroyAllWindows()

@@ -34,7 +34,8 @@ class Frame:
 
         self.pixels_2fighters = [np.zeros_like(self.pixels), np.zeros_like(self.pixels)]
         self.trunk_2fighters = [-1, -1]
-        self.pose_2fighters = [None, None]
+        self.pose_2fighters = [np.zeros((25, 3)), np.zeros((25, 3))]
+        # self.pose_2fighters_3d = [None, None]
         return
 
     def extract_fighter_pose_yolo8(self, track_history, drop_counting):
@@ -109,6 +110,7 @@ class Frame:
             datum.cvInputData = self.pixels_2fighters[i]
             opWrapper.emplaceAndPop(op.VectorDatum([datum]))
             keypoints = datum.poseKeypoints
+            # print(keypoints)
             if keypoints is not None and len(keypoints) > 0:
                 self.pose_2fighters[i] = keypoints[0]
         return

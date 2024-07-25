@@ -216,7 +216,7 @@ class Clip:
 
     #     return
 
-    def output2(self):
+    def output2(self, kpt=True):
         out_fighter_0 = cv2.VideoWriter(
             os.path.join(DIR_OUT, f"{self.clip_name}_fighter_op_0.mp4"),
             cv2.VideoWriter_fourcc(*"mp4v"),
@@ -233,11 +233,94 @@ class Clip:
 
         print("Exporting frames...")
         for frame in tqdm(self.frames):
-            out_fighter_0.write(frame.draw_keypoints(0))
-            out_fighter_1.write(frame.draw_keypoints(1))
+            if kpt:
+                out_fighter_0.write(frame.draw_keypoints(0))
+                out_fighter_1.write(frame.draw_keypoints(1))
+            else:
+                out_fighter_0.write(frame.pixels_2fighters[0].copy())
+                out_fighter_1.write(frame.pixels_2fighters[1].copy())
 
         out_fighter_0.release()
         out_fighter_1.release()
+        return
+
+    def export_npz(self):
+
+        keypoints_data = {"positions_2d": {}}
+        metadata = {
+            "layout_name": "coco",
+            "num_joints": 17,
+            "keypoints_symmetry": [
+                [1, 2],
+                [3, 4],
+                [5, 6],
+                [7, 8],
+                [9, 10],
+                [11, 12],
+                [13, 14],
+                [15, 16],
+            ],
+            "video_metadata": {},
+        }
+
+        # Correct mapping from BODY_25 to COCO keypoints
+        body25_to_coco = [0, 15, 16, 17, 18, 2, 5, 3, 6, 4, 7, 9, 12, 10, 13, 11, 14]
+        coco_to_body25 = [
+            0,
+            -1,
+            5,
+            7,
+            9,
+            6,
+            8,
+            10,
+            -1,
+            11,
+            13,
+            15,
+            12,
+            14,
+            16,
+            1,
+            2,
+            3,
+            4,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+            -1,
+        ]
+
+        # Process data for each fighter
+        for fighter_idx in range(2):
+            positions_2d = []
+
+            for frame in self.frames:
+                frame_keypoints = frame.pose_2fighters[fighter_idx][
+                    body25_to_coco, :2
+                ]  # Map and extract x, y coordinates
+                positions_2d.append(frame_keypoints)
+
+            positions_2d = np.array(positions_2d, dtype=np.float32)
+            key = f"fighter_{fighter_idx}"
+            keypoints_data["positions_2d"][key] = {"custom": [positions_2d]}
+            metadata["video_metadata"][key] = {
+                "w": 1280,  # Width of the video frame, change if different
+                "h": 720,  # Height of the video frame, change if different
+                "fps": 30,  # Frames per second of the video, change if different
+            }
+
+            # Save to .npz file
+            np.savez_compressed(
+                os.path.join(
+                    "D:/Documents/devs/VideoPose3D/data",
+                    f"{self.clip_name}_{fighter_idx}.npz",
+                ),
+                positions_2d=keypoints_data["positions_2d"],
+                metadata=metadata,
+            )
         return
 
     def split_2_fighters(self):
@@ -469,12 +552,6 @@ class Clip:
         print("Tracking 2 fighters separately with OpenPose...")
         for frame in tqdm(self.frames):
             frame.extract_fighter_pose_op(datum, opWrapper)
-            # for i in [0, 1]:
-            #     datum.cvInputData = frame.pixels_2fighters[i]
-            #     opWrapper.emplaceAndPop(op.VectorDatum([datum]))
-            #     keypoints = datum.poseKeypoints
-            #     if keypoints is not None and len(keypoints) > 0:
-            #         frame.pose_2fighters[i] = keypoints[0]
 
         return
 
@@ -482,13 +559,11 @@ class Clip:
 def run_extract_fighters(fn_video):
     clip = Clip(fn_video)
 
-    # clip.generate_fighter_bboxes()
-    # clip.generate_fighter_contour()
     clip.generate_fighters_poses()
 
     clip.drop_less_frequent_poses()
-    clip.bisection_trunk_color()
 
+    clip.bisection_trunk_color()
     clip.hmm_track()
 
     clip.fill_missing_bbox()  # Fill missing bounding boxes
@@ -497,7 +572,8 @@ def run_extract_fighters(fn_video):
 
     clip.generate_2fighter_poses()
 
-    clip.output2()
+    clip.output2(kpt=False)
+    clip.export_npz()
 
     cv2.destroyAllWindows()
     return
