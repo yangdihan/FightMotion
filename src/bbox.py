@@ -36,6 +36,19 @@ class Bbox:
         copied_bbox.pose_yolo8 = self.pose_yolo8
         return copied_bbox
 
+    def expand_bbox(self, expand_ratio):
+        x, y, w, h = self.xywh
+        x -= expand_ratio * w
+        y -= expand_ratio * h
+        w = (1 + 2 * expand_ratio) * w
+        h = (1 + 2 * expand_ratio) * h
+        x = int(max(0, x))
+        y = int(max(0, y))
+        w = int(min(self.frame.pixels.shape[1] - x, w))
+        h = int(min(self.frame.pixels.shape[0] - y, h))
+
+        return x, y, w, h
+
     # @staticmethod
     # def bbox_dist(bbox1, bbox2):
     #     def euclidean_distance(p1, p2):
@@ -73,16 +86,3 @@ class Bbox:
     #     ) / 2
 
     #     return avg_distance / avg_diagonal
-
-    def expand_bbox(self, expand_ratio):
-        x, y, w, h = self.xywh
-        x -= expand_ratio * w
-        y -= expand_ratio * h
-        w = (1 + 2 * expand_ratio) * w
-        h = (1 + 2 * expand_ratio) * h
-        x = int(max(0, x))
-        y = int(max(0, y))
-        w = int(min(self.frame.pixels.shape[1] - x, w))
-        h = int(min(self.frame.pixels.shape[0] - y, h))
-
-        return x, y, w, h

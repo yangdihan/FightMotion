@@ -224,6 +224,14 @@ class Pose:
 
         else:
             polygon_vertices = np.array(bbox_points, np.int32)
+            
+        # Calculate the midpoint for the left and right sides
+        mid_left = (polygon_vertices[0] + polygon_vertices[3]) / 2
+        mid_right = (polygon_vertices[1] + polygon_vertices[2]) / 2
+
+        # Update the bottom-left and bottom-right vertices
+        polygon_vertices[2] = mid_right
+        polygon_vertices[3] = mid_left
 
         return sort_vertices_clockwise(polygon_vertices).astype(np.int32)
 
