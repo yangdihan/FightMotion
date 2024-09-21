@@ -14,6 +14,7 @@ from constants import (
     MAX_MISSING_FRAMES,
     MIN_KEYPOINTS,
     POSE_PAIRS_25,
+    DEVICE,
 )
 
 from bbox import Bbox
@@ -48,7 +49,7 @@ class Frame:
             conf=POSE_CONF_THRESHOLD,
             # conf=0.1,
             iou=0.85,
-            device="cuda",
+            device=DEVICE,
         )[0]
         boxes = result.boxes.xywh.cpu()
         keypoints = result.keypoints.data
@@ -68,7 +69,6 @@ class Frame:
                 drop_counting[d] += 1
 
         for box, track_id, keypoint in zip(boxes, track_ids, keypoints):
-
             # check if bbox is big enough
             x, y, w, h = box
             if (
@@ -85,21 +85,18 @@ class Frame:
 
                 # Filter out keypoints with less than MIN_KEYPOINTS points
                 if keypoint_conf.shape[0] > MIN_KEYPOINTS:
-
                     track = track_history[track_id]
                     track.append(keypoint.unsqueeze(0))
 
-                    if len(track) > MAX_MISSING_FRAMES:
+                    if len(track) > MIN_APPEARING_FRAMES:
                         track.pop(0)
 
                     # Only consider poses that have appeared for at least MIN_APPEARING_FRAMES frames
-                    if len(track) >= MIN_APPEARING_FRAMES:
+                    if len(track) == MIN_APPEARING_FRAMES:
                         pose = Pose(torch.cat(track).cpu(), track_id, self, box)
 
                         if pose.pct_skin > SKIN_PCT_THRESHOLD:
                             # check if person is naked enough
-                            # pose.classify_trunk_color()
-                            # self.poses.append(pose)
                             bbox.pose_yolo8 = pose
                             self.bboxes.append(bbox)
 

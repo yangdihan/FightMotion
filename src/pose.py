@@ -40,7 +40,7 @@ class Pose:
         self.compute_pct_skin()
 
         self.trunk_id = -1
-        self.hmm_id = -1
+        self.fighter_id = -1
         return
 
     @staticmethod
@@ -224,7 +224,7 @@ class Pose:
 
         else:
             polygon_vertices = np.array(bbox_points, np.int32)
-            
+
         # Calculate the midpoint for the left and right sides
         mid_left = (polygon_vertices[0] + polygon_vertices[3]) / 2
         mid_right = (polygon_vertices[1] + polygon_vertices[2]) / 2

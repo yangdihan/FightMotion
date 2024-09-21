@@ -14,6 +14,8 @@ from constants import (
     # SIZE_SQUARE_IMG,
     MIN_APPEARING_FRAMES,
     OPENPOSE_PARAM,
+    BODY25_TO_COCO,
+    COCO_KEYPOINT_METADATA,
 )
 from frame import Frame
 from bbox import Bbox
@@ -55,274 +57,6 @@ class Clip:
         ret, frame = self.cap.read()
         return ret, frame
 
-    def output(self, jpg=True):
-        out = cv2.VideoWriter(
-            os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.mp4"),
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            self.fps,
-            (self.frame_width, self.frame_height),
-        )
-
-        poses_json_data = []
-
-        print("Exporting frames...")
-        for frame in tqdm(self.frames):
-            marked_frame = frame.pixels.copy()
-            frame_poses = []
-
-            for pose in frame.poses:
-                marked_frame = pose.plot_skeleton_kpts(marked_frame)
-                text = (
-                    # f"track:{pose.track_id}, trunk:{pose.trunk_id}, {int(pose.pct_skin*100)}%, {pose.trunk_color}"
-                    f"track:{pose.track_id}, trunk:{pose.trunk_id}, {int(pose.pct_skin*100)}%"
-                )
-
-                keypoints = (
-                    pose.keypoints[-1].cpu().numpy()
-                )  # Get the last set of keypoints
-                x = int(np.median(keypoints[:, 0]))
-                y = int(np.median(keypoints[:, 1]))
-
-                cv2.putText(
-                    marked_frame,
-                    text,
-                    (x, y + 15),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.5,
-                    (0, 0, 255),
-                    1,
-                    cv2.LINE_AA,
-                )
-
-            poses_json_data[frame.idx] = {
-                int(trunk_id): keypoints for trunk_id, keypoints in frame_poses.items()
-            }
-
-            poses_json_data.append({"frame": frame.idx, "poses": frame_poses})
-            out.write(marked_frame)
-
-            if jpg:
-                frame_output_path = os.path.join(
-                    DIR_OUT, f"{self.clip_name}_frame{frame.idx}.jpg"
-                )
-                cv2.imwrite(frame_output_path, marked_frame)
-
-        out.release()
-
-        with open(
-            os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.json"), "w"
-        ) as json_file:
-            json.dump(poses_json_data, json_file, indent=4)
-
-        return
-
-    # def output_2bbox(self):
-    #     out_fighter_0 = cv2.VideoWriter(
-    #         os.path.join(DIR_OUT, f"{self.clip_name}_fighter_0.mp4"),
-    #         cv2.VideoWriter_fourcc(*"mp4v"),
-    #         self.fps,
-    #         (self.frame_width, self.frame_height),
-    #     )
-
-    #     out_fighter_1 = cv2.VideoWriter(
-    #         os.path.join(DIR_OUT, f"{self.clip_name}_fighter_1.mp4"),
-    #         cv2.VideoWriter_fourcc(*"mp4v"),
-    #         self.fps,
-    #         (self.frame_width, self.frame_height),
-    #     )
-
-    #     # poses_json_data = {}
-
-    #     print("Exporting frames...")
-    #     for frame in tqdm(self.frames):
-    #         # marked_frame = frame.pixels.copy()
-    #         fighter_0_frame = np.zeros_like(frame.pixels)
-    #         fighter_1_frame = np.zeros_like(frame.pixels)
-    #         # frame_poses = {}
-
-    #         for bbox in frame.bboxes:
-    #             pose = bbox.pose_yolo8
-    #             # marked_frame = pose.plot_skeleton_kpts(marked_frame)
-    #             # keypoints = (
-    #             #     pose.keypoints[-1].cpu().numpy()
-    #             # )  # Get the last set of keypoints
-
-    #             # text = f"frame:{frame.idx}, trunk:{pose.trunk_id}, hmm: {pose.hmm_id}, {int(pose.pct_skin*100)}%"
-    #             # x = int(np.median(keypoints[:, 0]))
-    #             # y = int(np.median(keypoints[:, 1]))
-    #             # cv2.putText(
-    #             #     marked_frame,
-    #             #     text,
-    #             #     (x, y + 15),
-    #             #     cv2.FONT_HERSHEY_SIMPLEX,
-    #             #     0.5,
-    #             #     (0, 0, 255),
-    #             #     1,
-    #             #     cv2.LINE_AA,
-    #             # )
-    #             # frame_poses[pose.trunk_id] = keypoints.tolist()
-
-    #             # # Draw the torso and trunk polygons
-    #             # if pose.torso_polygon is not None:
-    #             #     cv2.polylines(
-    #             #         marked_frame,
-    #             #         [pose.torso_polygon],
-    #             #         isClosed=True,
-    #             #         color=(75, 75, 75),
-    #             #         thickness=2,
-    #             #     )
-    #             # if pose.trunk_polygon is not None:
-    #             #     cv2.polylines(
-    #             #         marked_frame,
-    #             #         [pose.trunk_polygon],
-    #             #         isClosed=True,
-    #             #         color=(155, 155, 155),
-    #             #         thickness=2,
-    #             #     )
-
-    #             # Copy the box region of the pose to the respective fighter frame
-    #             x, y, w, h = bbox.xywh
-    #             x1 = int(x - w / 2)
-    #             x2 = int(x + w / 2)
-    #             y1 = int(y - h / 2)
-    #             y2 = int(y + h / 2)
-
-    #             if pose.hmm_id == 0:
-    #                 fighter_0_frame[y1:y2, x1:x2] = frame.pixels[y1:y2, x1:x2]
-    #             if pose.hmm_id == 1:
-    #                 fighter_1_frame[y1:y2, x1:x2] = frame.pixels[y1:y2, x1:x2]
-
-    #         # poses_json_data[frame.idx] = {
-    #         #     int(trunk_id): keypoints for trunk_id, keypoints in frame_poses.items()
-    #         # }
-    #         # cv2.imwrite(
-    #         #     os.path.join(DIR_OUT, f"{self.clip_name}_frame{frame.idx}_trunk0.jpg"),
-    #         #     fighter_0_frame,
-    #         # )
-    #         # cv2.imwrite(
-    #         #     os.path.join(DIR_OUT, f"{self.clip_name}_frame{frame.idx}_trunk1.jpg"),
-    #         #     fighter_1_frame,
-    #         # )
-    #         out_fighter_0.write(fighter_0_frame)
-    #         out_fighter_1.write(fighter_1_frame)
-
-    #     out_fighter_0.release()
-    #     out_fighter_1.release()
-
-    #     # with open(
-    #     #     os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.json"), "w"
-    #     # ) as json_file:
-    #     #     json.dump(poses_json_data, json_file, indent=4)
-
-    #     return
-
-    def output2(self, kpt=True):
-        out_fighter_0 = cv2.VideoWriter(
-            os.path.join(DIR_OUT, f"{self.clip_name}_fighter_op_0.mp4"),
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            self.fps,
-            (self.frame_width, self.frame_height),
-        )
-
-        out_fighter_1 = cv2.VideoWriter(
-            os.path.join(DIR_OUT, f"{self.clip_name}_fighter_op_1.mp4"),
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            self.fps,
-            (self.frame_width, self.frame_height),
-        )
-
-        print("Exporting frames...")
-        for frame in tqdm(self.frames):
-            if kpt:
-                out_fighter_0.write(frame.draw_keypoints(0))
-                out_fighter_1.write(frame.draw_keypoints(1))
-            else:
-                out_fighter_0.write(frame.pixels_2fighters[0].copy())
-                out_fighter_1.write(frame.pixels_2fighters[1].copy())
-
-        out_fighter_0.release()
-        out_fighter_1.release()
-        return
-
-    def export_npz(self):
-
-        keypoints_data = {"positions_2d": {}}
-        metadata = {
-            "layout_name": "coco",
-            "num_joints": 17,
-            "keypoints_symmetry": [
-                [1, 2],
-                [3, 4],
-                [5, 6],
-                [7, 8],
-                [9, 10],
-                [11, 12],
-                [13, 14],
-                [15, 16],
-            ],
-            "video_metadata": {},
-        }
-
-        # Correct mapping from BODY_25 to COCO keypoints
-        body25_to_coco = [0, 15, 16, 17, 18, 2, 5, 3, 6, 4, 7, 9, 12, 10, 13, 11, 14]
-        coco_to_body25 = [
-            0,
-            -1,
-            5,
-            7,
-            9,
-            6,
-            8,
-            10,
-            -1,
-            11,
-            13,
-            15,
-            12,
-            14,
-            16,
-            1,
-            2,
-            3,
-            4,
-            -1,
-            -1,
-            -1,
-            -1,
-            -1,
-            -1,
-        ]
-
-        # Process data for each fighter
-        for fighter_idx in range(2):
-            positions_2d = []
-
-            for frame in self.frames:
-                frame_keypoints = frame.pose_2fighters[fighter_idx][
-                    body25_to_coco, :2
-                ]  # Map and extract x, y coordinates
-                positions_2d.append(frame_keypoints)
-
-            positions_2d = np.array(positions_2d, dtype=np.float32)
-            key = f"fighter_{fighter_idx}"
-            keypoints_data["positions_2d"][key] = {"custom": [positions_2d]}
-            metadata["video_metadata"][key] = {
-                "w": 1280,  # Width of the video frame, change if different
-                "h": 720,  # Height of the video frame, change if different
-                "fps": 30,  # Frames per second of the video, change if different
-            }
-
-            # Save to .npz file
-            np.savez_compressed(
-                os.path.join(
-                    "D:/Documents/devs/VideoPose3D/data",
-                    f"{self.clip_name}_{fighter_idx}.npz",
-                ),
-                positions_2d=keypoints_data["positions_2d"],
-                metadata=metadata,
-            )
-        return
-
     def split_2_fighters(self):
 
         print("Splitting fighters...")
@@ -336,10 +70,12 @@ class Clip:
                 y1 = int(y - h / 2)
                 y2 = int(y + h / 2)
 
-                frame.pixels_2fighters[bbox.pose_yolo8.hmm_id][y1:y2, x1:x2] = (
+                frame.pixels_2fighters[bbox.pose_yolo8.fighter_id][y1:y2, x1:x2] = (
                     frame.pixels[y1:y2, x1:x2]
                 )
-                frame.trunk_2fighters[bbox.pose_yolo8.hmm_id] = bbox.pose_yolo8.trunk_id
+                frame.trunk_2fighters[bbox.pose_yolo8.fighter_id] = (
+                    bbox.pose_yolo8.trunk_id
+                )
 
         return
 
@@ -362,7 +98,15 @@ class Clip:
         for frame in self.frames:
             for bbox in frame.bboxes:
                 trunk_hsv = bbox.pose_yolo8.trunk_hsv
-                trunk_colors.append(trunk_hsv.flatten())
+                # trunk_colors.append(trunk_hsv.flatten())
+                # Augment the original image by rotating it and its vertical mirror every 90 degrees
+                for angle in [0, 90, 180, 270]:
+                    rotated = np.rot90(trunk_hsv, k=angle // 90)
+                    trunk_colors.append(rotated.flatten())
+
+                    # Add the vertical mirror image and rotate it
+                    mirrored = np.flipud(rotated)
+                    trunk_colors.append(mirrored.flatten())
 
         # Convert to numpy array
         trunk_colors_np = np.array(trunk_colors)
@@ -405,23 +149,47 @@ class Clip:
 
     def drop_less_frequent_poses(self):
         track_id_counts = defaultdict(int)
+
+        # Count how many times each track_id appears across frames
         for frame in self.frames:
             for bbox in frame.bboxes:
                 track_id_counts[bbox.pose_yolo8.track_id] += 1
 
-        min_required_count = self.frame_count * 2 / len(track_id_counts)
+        # Set a minimum threshold for the number of frames a track_id should appear in
+        min_required_count = (self.frame_count - 2 * 6) / len(track_id_counts)
 
+        # Filter out bboxes with track_id that appear less frequently than the threshold
         for frame in self.frames:
             frame.bboxes = [
                 bbox
                 for bbox in frame.bboxes
                 if track_id_counts[bbox.pose_yolo8.track_id] >= min_required_count
             ]
-            if len(frame.bboxes) > 2:
 
+            # If more than 2 bboxes, only keep the 2 most frequent ones
+            if len(frame.bboxes) > 2:
                 frame.bboxes = sorted(
                     frame.bboxes, key=lambda b: -track_id_counts[b.pose_yolo8.track_id]
                 )[:2]
+
+        # Normalize the surviving track_ids to be 0 and 1
+        # Step 1: Find the two unique track_ids that survived
+        unique_track_ids = set()
+        for frame in self.frames:
+            for bbox in frame.bboxes:
+                unique_track_ids.add(bbox.pose_yolo8.track_id)
+
+        if len(unique_track_ids) != 2:
+            print("Error: Expected 2 unique track_ids, but found:", unique_track_ids)
+            return
+
+        # Map the two unique track_ids to 0 and 1
+        track_id_mapping = {track_id: i for i, track_id in enumerate(unique_track_ids)}
+
+        # Step 2: Replace the track_ids in each frame with 0 or 1
+        for frame in self.frames:
+            for bbox in frame.bboxes:
+                bbox.pose_yolo8.track_id = track_id_mapping[bbox.pose_yolo8.track_id]
 
         return
 
@@ -430,7 +198,7 @@ class Clip:
             if len(frame.bboxes) < 2 and i > MIN_APPEARING_FRAMES:
                 for trunk_id in [0, 1]:
                     if not any(
-                        bbox.pose_yolo8.hmm_id == trunk_id for bbox in frame.bboxes
+                        bbox.pose_yolo8.fighter_id == trunk_id for bbox in frame.bboxes
                     ):
                         prev_bbox = self.find_last_bbox(i, trunk_id)
                         next_bbox = self.find_next_bbox(i, trunk_id)
@@ -458,7 +226,9 @@ class Clip:
                                     break
 
         for frame in self.frames:
-            frame.bboxes = sorted(frame.bboxes, key=lambda bbox: bbox.pose_yolo8.hmm_id)
+            frame.bboxes = sorted(
+                frame.bboxes, key=lambda bbox: bbox.pose_yolo8.fighter_id
+            )
         return
 
     def hull_bbox(self, bbox1, bbox2, frame):
@@ -497,50 +267,150 @@ class Clip:
                     return bbox
         return None
 
-    def hmm_track(self):
-        # Prepare the observations and states
-        observations = []
-        state_sequence = []
-
+    def resolve_fighter_ids(self):
+        # Step 1: Count the (track_id, trunk_id) combination frequency
+        track_trunk_combo_counts = defaultdict(int)
         for frame in self.frames:
-            if len(frame.bboxes) == 2:
-                bbox1, bbox2 = frame.bboxes[0], frame.bboxes[1]
-                xy1 = bbox1.xywh[:2]
-                xy2 = bbox2.xywh[:2]
-                trunk_id1 = bbox1.pose_yolo8.trunk_id
-                trunk_id2 = bbox2.pose_yolo8.trunk_id
-                observations.append([*xy1, trunk_id1])
-                observations.append([*xy2, trunk_id2])
-                state_sequence.append([trunk_id1, trunk_id2])  # Initial states
-            elif len(frame.bboxes) == 1:
-                bbox = frame.bboxes[0]
-                xy = bbox.xywh[:2]
-                trunk_id = bbox.pose_yolo8.trunk_id
-                observations.append([*xy, trunk_id])
-                state_sequence.append([trunk_id])  # Initial state for single bbox
+            for bbox in frame.bboxes:
+                combo = (bbox.pose_yolo8.track_id, bbox.pose_yolo8.trunk_id)
+                track_trunk_combo_counts[combo] += 1
 
-        # Convert to numpy array
-        observations = np.array(observations)
+        # Find the two most frequent combinations
+        sorted_combos = sorted(track_trunk_combo_counts.items(), key=lambda x: -x[1])
+        if len(sorted_combos) < 2:
+            print("Error: Less than 2 unique (track_id, trunk_id) combinations found.")
+            return
 
-        # Create and fit the HMM model
-        model = hmm.GaussianHMM(n_components=2, covariance_type="diag", n_iter=100)
-        model.fit(observations)
+        dominant_combo1, dominant_combo2 = sorted_combos[0][0], sorted_combos[1][0]
 
-        # Use Viterbi to find the most probable state sequence
-        _, state_sequence = model.decode(observations, algorithm="viterbi")
+        # Ensure the two dominant combinations are not colliding
+        if not (
+            dominant_combo1[0] != dominant_combo2[0]
+            and dominant_combo1[1] != dominant_combo2[1]
+        ):
+            print("Error: Dominant combinations are colliding.")
+            return
 
-        # Assign hmm_id based on the most probable state sequence
-        idx = 0
-        for frame in self.frames:
-            if len(frame.bboxes) == 2:
-                frame.bboxes[0].pose_yolo8.hmm_id = state_sequence[idx]
-                frame.bboxes[1].pose_yolo8.hmm_id = state_sequence[idx + 1]
-                idx += 2
-            elif len(frame.bboxes) == 1:
-                frame.bboxes[0].pose_yolo8.hmm_id = state_sequence[idx]
-                idx += 1
+        # Assign fighter_id based on trunk_id
+        combo_to_fighter_id = {
+            dominant_combo1: dominant_combo1[1],  # fighter_id = trunk_id
+            dominant_combo2: dominant_combo2[1],  # fighter_id = trunk_id
+        }
+
+        # Step 2: Find the first frame in which both dominant combinations appear
+        first_frame_idx = None
+        for idx, frame in enumerate(self.frames):
+            combos_in_frame = [
+                (bbox.pose_yolo8.track_id, bbox.pose_yolo8.trunk_id)
+                for bbox in frame.bboxes
+            ]
+            if (
+                dominant_combo1 in combos_in_frame
+                and dominant_combo2 in combos_in_frame
+            ):
+                first_frame_idx = idx
+                break
+
+        if first_frame_idx is None:
+            print("Error: No frame contains both dominant combinations.")
+            return
+
+        # Initialize prev_bbox_centroids with centroids of the first frame
+        prev_bbox_centroids = [None, None]
+        frame = self.frames[first_frame_idx]
+        for bbox in frame.bboxes:
+            combo = (bbox.pose_yolo8.track_id, bbox.pose_yolo8.trunk_id)
+            fighter_id = combo_to_fighter_id[combo]
+            bbox.pose_yolo8.fighter_id = fighter_id
+            x, y, w, h = bbox.xywh
+            prev_bbox_centroids[fighter_id] = np.array([x, y])
+
+        # Step 3 & 5: Process frames after and before the first frame
+        self.process_frames_in_direction(
+            first_frame_idx + 1,
+            len(self.frames),
+            1,
+            prev_bbox_centroids,
+            combo_to_fighter_id,
+        )
+        self.process_frames_in_direction(
+            first_frame_idx - 1, -1, -1, prev_bbox_centroids, combo_to_fighter_id
+        )
 
         return
+
+    def process_frames_in_direction(
+        self, start_idx, end_idx, step, prev_bbox_centroids, combo_to_fighter_id
+    ):
+        """Helper function to process frames in both forward and backward directions."""
+        for idx in range(start_idx, end_idx, step):
+            frame = self.frames[idx]
+            assigned_fighters = set()
+            unmatched_combinations = set()
+
+            # Assign fighter_ids based on dominant combinations
+            for bbox in frame.bboxes:
+                combo = (bbox.pose_yolo8.track_id, bbox.pose_yolo8.trunk_id)
+                if combo in combo_to_fighter_id:
+                    fighter_id = combo_to_fighter_id[combo]
+                    bbox.pose_yolo8.fighter_id = fighter_id
+                    assigned_fighters.add(fighter_id)
+                else:
+                    unmatched_combinations.add(bbox)
+
+            # Handle cases where only one dominant combination appears
+            if len(assigned_fighters) == 1:
+                missing_fighter_id = 1 - list(assigned_fighters)[0]
+                for bbox in unmatched_combinations:
+                    bbox.pose_yolo8.fighter_id = missing_fighter_id
+                    assigned_fighters.add(missing_fighter_id)
+
+            # Handle unassigned bboxes based on proximity
+            unassigned_bboxes = [
+                bbox
+                for bbox in frame.bboxes
+                if bbox.pose_yolo8.fighter_id not in assigned_fighters
+            ]
+            if len(unassigned_bboxes) == 1:
+                # If only one unassigned bbox, simply assign based on proximity
+                bbox = unassigned_bboxes[0]
+                x, y, w, h = bbox.xywh
+                centroid = np.array([x, y])
+                distances = [
+                    np.linalg.norm(centroid - prev_bbox_centroids[fid])
+                    for fid in range(2)
+                ]
+                min_fighter_id = np.argmin(distances)
+                bbox.pose_yolo8.fighter_id = min_fighter_id
+            elif len(unassigned_bboxes) == 2:
+                # Compute all 4 distances (unassigned to previous centroids)
+                bboxes_centroids = [
+                    np.array([bbox.xywh[0], bbox.xywh[1]]) for bbox in unassigned_bboxes
+                ]
+                distances = np.zeros(
+                    (2, 2)
+                )  # Matrix for 2 unassigned bboxes vs 2 prev_bbox_centroids
+                for i, centroid in enumerate(bboxes_centroids):
+                    for j in range(2):
+                        distances[i, j] = np.linalg.norm(
+                            centroid - prev_bbox_centroids[j]
+                        )
+
+                # Find the closest pair (use the smallest distance first)
+                min_idx = np.unravel_index(np.argmin(distances), distances.shape)
+                bbox_0, bbox_1 = unassigned_bboxes
+                if min_idx[0] == min_idx[1]:
+                    bbox_0.pose_yolo8.fighter_id = 0
+                    bbox_1.pose_yolo8.fighter_id = 1
+                else:
+                    bbox_0.pose_yolo8.fighter_id = 1
+                    bbox_1.pose_yolo8.fighter_id = 0
+
+            # Update prev_bbox_centroids
+            for bbox in frame.bboxes:
+                fighter_id = bbox.pose_yolo8.fighter_id
+                x, y, w, h = bbox.xywh
+                prev_bbox_centroids[fighter_id] = np.array([x, y])
 
     def generate_2fighter_poses(self):
         opWrapper = op.WrapperPython()
@@ -555,6 +425,96 @@ class Clip:
 
         return
 
+    def output(self, kpt=True, jpg=False):
+
+        for i in range(2):
+
+            out_video = cv2.VideoWriter(
+                os.path.join(
+                    DIR_OUT, "single_fighter_kpts", f"{self.clip_name}_fighter{i}.mp4"
+                ),
+                cv2.VideoWriter_fourcc(*"mp4v"),
+                self.fps,
+                (self.frame_width, self.frame_height),
+            )
+
+            for frame in tqdm(self.frames):
+                if kpt:
+                    out_frame = frame.draw_keypoints(i)
+                else:
+                    out_frame = frame.pixels_2fighters[i].copy()
+
+                out_video.write(out_frame)
+
+                if jpg:
+                    fp_frame = os.path.join(DIR_OUT, self.clip_name)
+                    if not os.path.exists(fp_frame):
+                        os.mkdir(fp_frame)
+
+                    cv2.imwrite(
+                        os.path.join(fp_frame, f"fighter{i}_frame{frame.idx}.jpg"),
+                        out_frame,
+                    )
+
+            out_video.release()
+
+        return
+
+    def export_npz(self):
+
+        keypoints_data = {"positions_2d": {}}
+        metadata = COCO_KEYPOINT_METADATA
+
+        # Process data for each fighter
+        for fighter_idx in range(2):
+            positions_2d = []
+
+            for frame in self.frames:
+                frame_keypoints = frame.pose_2fighters[fighter_idx][
+                    BODY25_TO_COCO, :2
+                ]  # Map and extract x, y coordinates
+                positions_2d.append(frame_keypoints)
+
+            positions_2d = np.array(positions_2d, dtype=np.float32)
+            key = f"fighter_{fighter_idx}"
+            keypoints_data["positions_2d"][key] = {"custom": [positions_2d]}
+            metadata["video_metadata"][key] = {
+                "w": self.frame_width,  # Width of the video frame, change if different
+                "h": self.frame_height,  # Height of the video frame, change if different
+                "fps": self.fps,  # Frames per second of the video, change if different
+            }
+
+            # Save to .npz file
+            np.savez_compressed(
+                os.path.join(
+                    "D:/Documents/devs/VideoPose3D/data",
+                    f"{self.clip_name}_{fighter_idx}.npz",
+                ),
+                positions_2d=keypoints_data["positions_2d"],
+                metadata=metadata,
+            )
+        return
+
+    def export_paired_motion_sequence(self):
+        """
+        Export the keypoints data as an array of size (frame_count, 2, 25, 3).
+
+        :param output_path: Path where the .npz file will be saved.
+        """
+        frame_count = len(self.frames)
+        paired_keypoints = np.zeros((frame_count, 2, 25, 3), dtype=np.float32)
+
+        for i, frame in enumerate(self.frames):
+            paired_keypoints[i, 0] = frame.pose_2fighters[0]
+            paired_keypoints[i, 1] = frame.pose_2fighters[1]
+
+        # Save to .npz file
+        np.savez_compressed(
+            os.path.join(DIR_OUT, "paired_keypoints", f"{self.clip_name}.npz"),
+            paired_keypoints=paired_keypoints,
+        )
+        return
+
 
 def run_extract_fighters(fn_video):
     clip = Clip(fn_video)
@@ -564,7 +524,7 @@ def run_extract_fighters(fn_video):
     clip.drop_less_frequent_poses()
 
     clip.bisection_trunk_color()
-    clip.hmm_track()
+    clip.resolve_fighter_ids()
 
     clip.fill_missing_bbox()  # Fill missing bounding boxes
 
@@ -572,11 +532,173 @@ def run_extract_fighters(fn_video):
 
     clip.generate_2fighter_poses()
 
-    clip.output2(kpt=False)
-    clip.export_npz()
+    clip.output(kpt=True)
+    # clip.export_npz()
+    # clip.export_paired_motion_sequence()
 
     cv2.destroyAllWindows()
     return
+
+    # def output(self, jpg=True):
+    #     out = cv2.VideoWriter(
+    #         os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.mp4"),
+    #         cv2.VideoWriter_fourcc(*"mp4v"),
+    #         self.fps,
+    #         (self.frame_width, self.frame_height),
+    #     )
+
+    #     poses_json_data = []
+
+    #     print("Exporting frames...")
+    #     for frame in tqdm(self.frames):
+    #         marked_frame = frame.pixels.copy()
+    #         frame_poses = []
+
+    #         for pose in frame.poses:
+    #             marked_frame = pose.plot_skeleton_kpts(marked_frame)
+    #             text = (
+    #                 # f"track:{pose.track_id}, trunk:{pose.trunk_id}, {int(pose.pct_skin*100)}%, {pose.trunk_color}"
+    #                 f"track:{pose.track_id}, trunk:{pose.trunk_id}, {int(pose.pct_skin*100)}%"
+    #             )
+
+    #             keypoints = (
+    #                 pose.keypoints[-1].cpu().numpy()
+    #             )  # Get the last set of keypoints
+    #             x = int(np.median(keypoints[:, 0]))
+    #             y = int(np.median(keypoints[:, 1]))
+
+    #             cv2.putText(
+    #                 marked_frame,
+    #                 text,
+    #                 (x, y + 15),
+    #                 cv2.FONT_HERSHEY_SIMPLEX,
+    #                 0.5,
+    #                 (0, 0, 255),
+    #                 1,
+    #                 cv2.LINE_AA,
+    #             )
+
+    #         poses_json_data[frame.idx] = {
+    #             int(trunk_id): keypoints for trunk_id, keypoints in frame_poses.items()
+    #         }
+
+    #         poses_json_data.append({"frame": frame.idx, "poses": frame_poses})
+    #         out.write(marked_frame)
+
+    #         if jpg:
+    #             frame_output_path = os.path.join(
+    #                 DIR_OUT, f"{self.clip_name}_frame{frame.idx}.jpg"
+    #             )
+    #             cv2.imwrite(frame_output_path, marked_frame)
+
+    #     out.release()
+
+    #     with open(
+    #         os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.json"), "w"
+    #     ) as json_file:
+    #         json.dump(poses_json_data, json_file, indent=4)
+
+    #     return
+
+    # def output_2bbox(self):
+    #     out_fighter_0 = cv2.VideoWriter(
+    #         os.path.join(DIR_OUT, f"{self.clip_name}_fighter_0.mp4"),
+    #         cv2.VideoWriter_fourcc(*"mp4v"),
+    #         self.fps,
+    #         (self.frame_width, self.frame_height),
+    #     )
+
+    #     out_fighter_1 = cv2.VideoWriter(
+    #         os.path.join(DIR_OUT, f"{self.clip_name}_fighter_1.mp4"),
+    #         cv2.VideoWriter_fourcc(*"mp4v"),
+    #         self.fps,
+    #         (self.frame_width, self.frame_height),
+    #     )
+
+    #     # poses_json_data = {}
+
+    #     print("Exporting frames...")
+    #     for frame in tqdm(self.frames):
+    #         # marked_frame = frame.pixels.copy()
+    #         fighter_0_frame = np.zeros_like(frame.pixels)
+    #         fighter_1_frame = np.zeros_like(frame.pixels)
+    #         # frame_poses = {}
+
+    #         for bbox in frame.bboxes:
+    #             pose = bbox.pose_yolo8
+    #             # marked_frame = pose.plot_skeleton_kpts(marked_frame)
+    #             # keypoints = (
+    #             #     pose.keypoints[-1].cpu().numpy()
+    #             # )  # Get the last set of keypoints
+
+    #             # text = f"frame:{frame.idx}, trunk:{pose.trunk_id}, hmm: {pose.fighter_id}, {int(pose.pct_skin*100)}%"
+    #             # x = int(np.median(keypoints[:, 0]))
+    #             # y = int(np.median(keypoints[:, 1]))
+    #             # cv2.putText(
+    #             #     marked_frame,
+    #             #     text,
+    #             #     (x, y + 15),
+    #             #     cv2.FONT_HERSHEY_SIMPLEX,
+    #             #     0.5,
+    #             #     (0, 0, 255),
+    #             #     1,
+    #             #     cv2.LINE_AA,
+    #             # )
+    #             # frame_poses[pose.trunk_id] = keypoints.tolist()
+
+    #             # # Draw the torso and trunk polygons
+    #             # if pose.torso_polygon is not None:
+    #             #     cv2.polylines(
+    #             #         marked_frame,
+    #             #         [pose.torso_polygon],
+    #             #         isClosed=True,
+    #             #         color=(75, 75, 75),
+    #             #         thickness=2,
+    #             #     )
+    #             # if pose.trunk_polygon is not None:
+    #             #     cv2.polylines(
+    #             #         marked_frame,
+    #             #         [pose.trunk_polygon],
+    #             #         isClosed=True,
+    #             #         color=(155, 155, 155),
+    #             #         thickness=2,
+    #             #     )
+
+    #             # Copy the box region of the pose to the respective fighter frame
+    #             x, y, w, h = bbox.xywh
+    #             x1 = int(x - w / 2)
+    #             x2 = int(x + w / 2)
+    #             y1 = int(y - h / 2)
+    #             y2 = int(y + h / 2)
+
+    #             if pose.fighter_id == 0:
+    #                 fighter_0_frame[y1:y2, x1:x2] = frame.pixels[y1:y2, x1:x2]
+    #             if pose.fighter_id == 1:
+    #                 fighter_1_frame[y1:y2, x1:x2] = frame.pixels[y1:y2, x1:x2]
+
+    #         # poses_json_data[frame.idx] = {
+    #         #     int(trunk_id): keypoints for trunk_id, keypoints in frame_poses.items()
+    #         # }
+    #         # cv2.imwrite(
+    #         #     os.path.join(DIR_OUT, f"{self.clip_name}_frame{frame.idx}_trunk0.jpg"),
+    #         #     fighter_0_frame,
+    #         # )
+    #         # cv2.imwrite(
+    #         #     os.path.join(DIR_OUT, f"{self.clip_name}_frame{frame.idx}_trunk1.jpg"),
+    #         #     fighter_1_frame,
+    #         # )
+    #         out_fighter_0.write(fighter_0_frame)
+    #         out_fighter_1.write(fighter_1_frame)
+
+    #     out_fighter_0.release()
+    #     out_fighter_1.release()
+
+    #     # with open(
+    #     #     os.path.join(DIR_OUT, f"{self.clip_name}_poses_{POSE_TRACKER}.json"), "w"
+    #     # ) as json_file:
+    #     #     json.dump(poses_json_data, json_file, indent=4)
+
+    #     return
 
     # def direct_connection(self, items, bbox_dist_threshold):
     #     for frame_idx in range(self.frame_count - 1):
