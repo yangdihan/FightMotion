@@ -18,6 +18,8 @@ MAX_MISSING_FRAMES = 24
 MASK_EXPAND_RATIO = 0.05
 SIZE_SQUARE_IMG = 8
 
+POSE_DIFF_17_25_THRESHOLD = 200
+
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # # Load YOLOv5 model
@@ -203,33 +205,7 @@ POSE_PAIRS_25 = [
 ]
 
 BODY25_TO_COCO = [0, 15, 16, 17, 18, 2, 5, 3, 6, 4, 7, 9, 12, 10, 13, 11, 14]
-COCO_to_BODY25 = [
-    0,
-    -1,
-    5,
-    7,
-    9,
-    6,
-    8,
-    10,
-    -1,
-    11,
-    13,
-    15,
-    12,
-    14,
-    16,
-    1,
-    2,
-    3,
-    4,
-    -1,
-    -1,
-    -1,
-    -1,
-    -1,
-    -1,
-]
+COCO_to_BODY25 = [0, -1, 5, 7, 9, 6, 8, 10, -1, 11, 13, 15, 12, 14, 16, 1, 2, 3, 4, -1, -1, -1, -1, -1, -1]
 
 COCO_KEYPOINT_METADATA = {
     "layout_name": "coco",

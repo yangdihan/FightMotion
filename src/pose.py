@@ -26,7 +26,7 @@ def sort_vertices_clockwise(vertices):
 
 class Pose:
     def __init__(self, keypoints, track_id, frame, bbox):
-        self.keypoints = keypoints
+        self.keypoints = keypoints[-1]
         self.track_id = track_id
         self.frame = frame
         self.bbox = bbox  # Add bbox to the constructor
@@ -95,7 +95,7 @@ class Pose:
         return
 
     def get_torso_polygon(self):
-        keypoints = self.keypoints[-1].cpu().numpy()
+        keypoints = self.keypoints.cpu().numpy()
         x, y, w, h = self.bbox
 
         left_shoulder = Pose.get_fallback_keypoint(
@@ -129,7 +129,7 @@ class Pose:
         return np.array([left_shoulder, right_shoulder, right_hip, left_hip], np.int32)
 
     def get_trunk_polygon(self):
-        keypoints = self.keypoints[-1].cpu().numpy()
+        keypoints = self.keypoints.cpu().numpy()
         left_hip = keypoints[11]
         right_hip = keypoints[12]
         left_knee = keypoints[13]

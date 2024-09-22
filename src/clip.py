@@ -73,9 +73,7 @@ class Clip:
                 frame.pixels_2fighters[bbox.pose_yolo8.fighter_id][y1:y2, x1:x2] = (
                     frame.pixels[y1:y2, x1:x2]
                 )
-                frame.trunk_2fighters[bbox.pose_yolo8.fighter_id] = (
-                    bbox.pose_yolo8.trunk_id
-                )
+                frame.bbox_2fighters[bbox.pose_yolo8.fighter_id] = bbox
 
         return
 

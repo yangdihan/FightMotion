@@ -15,10 +15,44 @@ from constants import (
     MIN_KEYPOINTS,
     POSE_PAIRS_25,
     DEVICE,
+    BODY25_TO_COCO,
+    POSE_DIFF_17_25_THRESHOLD,
 )
 
 from bbox import Bbox
 from pose import Pose
+
+
+@staticmethod
+def compute_pose_difference(pose1, pose2, threshold=0.1):
+    """Compute the difference between two poses, rearranging the first pose to match COCO format."""
+    # Rearrange pose1 (BODY25 format) to match pose2 (COCO format)
+    if pose1 is None or pose2 is None:
+        return float("inf")  # Max difference if one of the poses is None
+
+    # Use the BODY25_TO_COCO map to rearrange pose1 to match pose2 (COCO format)
+    pose1_coco_format = np.zeros((17, 3))  # 17 keypoints for COCO format
+
+    for coco_idx, body25_idx in enumerate(BODY25_TO_COCO):
+        if body25_idx != -1:
+            pose1_coco_format[coco_idx] = pose1[body25_idx]
+        else:
+            pose1_coco_format[coco_idx] = [0, 0, 0]  # Invalid points mapped to 0s
+
+    # Now compare pose1_coco_format with pose2 (which is already in COCO format)
+    valid_indices = (pose1_coco_format[:, 2] > threshold) & (
+        pose2[:, 2] > threshold
+    )  # Confidence threshold
+
+    if np.sum(valid_indices) == 0:
+        return float("inf")  # Max difference if no valid keypoints
+
+    # Compute Euclidean distance between valid keypoints
+    diff = pose1_coco_format[valid_indices, :2] - pose2[valid_indices, :2]
+    distance = np.linalg.norm(diff, axis=1)
+    mean_difference = np.mean(distance)
+
+    return mean_difference
 
 
 class Frame:
@@ -34,9 +68,9 @@ class Frame:
         # self.poses = []
 
         self.pixels_2fighters = [np.zeros_like(self.pixels), np.zeros_like(self.pixels)]
-        self.trunk_2fighters = [-1, -1]
         self.pose_2fighters = [np.zeros((25, 3)), np.zeros((25, 3))]
-        # self.pose_2fighters_3d = [None, None]
+        self.bbox_2fighters = [None, None]
+
         return
 
     def extract_fighter_pose_yolo8(self, track_history, drop_counting):
@@ -107,9 +141,26 @@ class Frame:
             datum.cvInputData = self.pixels_2fighters[i]
             opWrapper.emplaceAndPop(op.VectorDatum([datum]))
             keypoints = datum.poseKeypoints
-            # print(keypoints)
+
             if keypoints is not None and len(keypoints) > 0:
-                self.pose_2fighters[i] = keypoints[0]
+                #  check each pose if multiple detected, but default to only detect one pose.
+                for keypoint in keypoints:
+                    # Get the pose of the opponent detected by yolo8
+                    if self.bbox_2fighters[1 - i]:
+                        opponent_keypoint = (
+                            self.bbox_2fighters[1 - i]
+                            .pose_yolo8.keypoints.cpu()
+                            .numpy()
+                        )
+                        # see if the pose detected by openpose is actually the opponent's, in case the bbox is too big
+                        difference = compute_pose_difference(
+                            keypoint, opponent_keypoint
+                        )
+                        # TODO: Normalize by resolution if necessary
+                        if difference > POSE_DIFF_17_25_THRESHOLD:
+                            # We found a valid pose, no need to check other poses
+                            self.pose_2fighters[i] = keypoint
+                            break
         return
 
     def draw_keypoints(self, fighter_id):
