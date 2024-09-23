@@ -191,7 +191,7 @@ class Clip:
 
         return
 
-    def fill_missing_bbox(self):
+    def fill_missing_bbox(self, method):
         for i, frame in enumerate(self.frames):
             if len(frame.bboxes) < 2 and i > MIN_APPEARING_FRAMES:
                 for trunk_id in [0, 1]:
@@ -200,22 +200,37 @@ class Clip:
                     ):
                         prev_bbox = self.find_last_bbox(i, trunk_id)
                         next_bbox = self.find_next_bbox(i, trunk_id)
+
+                        # If both previous and next bboxes are found
                         if prev_bbox is not None and next_bbox is not None:
-                            interpolated_bbox = self.hull_bbox(
-                                prev_bbox, next_bbox, frame
-                            )
+                            if method == "hull":
+                                # Use the original hull method
+                                interpolated_bbox = Bbox.hull_bbox(
+                                    prev_bbox, next_bbox, frame
+                                )
+                            elif method == "linear":
+                                # Use linear interpolation method
+                                interpolated_bbox = Bbox.linear_interpolate_bbox(
+                                    prev_bbox, next_bbox, frame
+                                )
+
+                            # Apply the interpolated bbox for all frames between prev and next
                             for j in range(
                                 prev_bbox.frame.idx + 1, next_bbox.frame.idx
                             ):
                                 self.frames[j].bboxes.append(
                                     interpolated_bbox.copy(True)
                                 )
+
+                        # If only previous bbox is found
                         elif prev_bbox is not None:
                             for j in range(prev_bbox.frame.idx + 1, len(self.frames)):
                                 if len(self.frames[j].bboxes) < 2:
                                     self.frames[j].bboxes.append(prev_bbox.copy(True))
                                 else:
                                     break
+
+                        # If only next bbox is found
                         elif next_bbox is not None:
                             for j in range(next_bbox.frame.idx - 1, -1, -1):
                                 if len(self.frames[j].bboxes) < 2:
@@ -223,33 +238,13 @@ class Clip:
                                 else:
                                     break
 
+        # Sort bounding boxes in each frame by fighter_id
         for frame in self.frames:
             frame.bboxes = sorted(
                 frame.bboxes, key=lambda bbox: bbox.pose_yolo8.fighter_id
             )
+
         return
-
-    def hull_bbox(self, bbox1, bbox2, frame):
-        x1, y1, w1, h1 = bbox1.xywh
-        x2, y2, w2, h2 = bbox2.xywh
-
-        x1_min = min(x1 - w1 / 2, x2 - w2 / 2)
-        y1_min = min(y1 - h1 / 2, y2 - h2 / 2)
-        x2_max = max(x1 + w1 / 2, x2 + w2 / 2)
-        y2_max = max(y1 + h1 / 2, y2 + h2 / 2)
-
-        center_x = (x1_min + x2_max) / 2
-        center_y = (y1_min + y2_max) / 2
-        width = x2_max - x1_min
-        height = y2_max - y1_min
-
-        new_xywh = [center_x, center_y, width, height]
-        new_bbox = Bbox(new_xywh, frame, is_interpolated=True)
-        new_bbox.pose_yolo8 = (
-            bbox1.pose_yolo8
-        )  # Assign the same pose to maintain consistency
-
-        return new_bbox
 
     def find_last_bbox(self, current_idx, trunk_id):
         for i in range(current_idx - 1, -1, -1):
@@ -524,7 +519,7 @@ def run_extract_fighters(fn_video):
     clip.bisection_trunk_color()
     clip.resolve_fighter_ids()
 
-    clip.fill_missing_bbox()  # Fill missing bounding boxes
+    clip.fill_missing_bbox(method="interpolate")  # Fill missing bounding boxes
 
     clip.split_2_fighters()
 
