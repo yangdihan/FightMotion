@@ -194,16 +194,20 @@ class Clip:
     def fill_missing_bbox(self, method):
         for i, frame in enumerate(self.frames):
             if len(frame.bboxes) < 2 and i > MIN_APPEARING_FRAMES:
-                for trunk_id in [0, 1]:
+                for fighter_id in [0, 1]:
                     if not any(
-                        bbox.pose_yolo8.fighter_id == trunk_id for bbox in frame.bboxes
+                        bbox.pose_yolo8.fighter_id == fighter_id
+                        for bbox in frame.bboxes
                     ):
-                        prev_bbox = self.find_last_bbox(i, trunk_id)
-                        next_bbox = self.find_next_bbox(i, trunk_id)
+                        prev_bbox = self.find_last_bbox(i, fighter_id)
+                        next_bbox = self.find_next_bbox(i, fighter_id)
 
                         # If both previous and next bboxes are found
                         if prev_bbox is not None and next_bbox is not None:
-                            if method == "hull":
+                            if (
+                                method == "hull"
+                                or prev_bbox.frame.idx == next_bbox.frame.idx
+                            ):
                                 # Use the original hull method
                                 interpolated_bbox = Bbox.hull_bbox(
                                     prev_bbox, next_bbox, frame
@@ -212,6 +216,10 @@ class Clip:
                                 # Use linear interpolation method
                                 interpolated_bbox = Bbox.linear_interpolate_bbox(
                                     prev_bbox, next_bbox, frame
+                                )
+                            else:
+                                raise ValueError(
+                                    f"Unknown Bbox filling method: {method}"
                                 )
 
                             # Apply the interpolated bbox for all frames between prev and next
@@ -519,7 +527,7 @@ def run_extract_fighters(fn_video):
     clip.bisection_trunk_color()
     clip.resolve_fighter_ids()
 
-    clip.fill_missing_bbox(method="interpolate")  # Fill missing bounding boxes
+    clip.fill_missing_bbox(method="linear")  # Fill missing bounding boxes
 
     clip.split_2_fighters()
 
