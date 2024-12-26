@@ -26,10 +26,10 @@ def sort_vertices_clockwise(vertices):
 
 class Pose:
     def __init__(self, keypoints, track_id, frame, bbox):
-        self.keypoints = keypoints[-1]
+        self.keypoints = keypoints.cpu()
         self.track_id = track_id
         self.frame = frame
-        self.bbox = bbox  # Add bbox to the constructor
+        self.bbox = bbox.cpu()  # Add bbox to the constructor
         self.seq_length = keypoints.shape[0]  # Number of keypoints sequences
 
         self.torso_polygon = self.get_torso_polygon()
@@ -70,7 +70,10 @@ class Pose:
 
         # Apply the perspective transformation
         transformed_img = cv2.warpPerspective(
-            self.frame.pixels, M, (SIZE_SQUARE_IMG, SIZE_SQUARE_IMG)
+            # self.frame.pixels, M, (SIZE_SQUARE_IMG, SIZE_SQUARE_IMG)
+            self.frame,
+            M,
+            (SIZE_SQUARE_IMG, SIZE_SQUARE_IMG),
         )
 
         img_hsv = cv2.cvtColor(transformed_img, cv2.COLOR_BGR2HSV)
@@ -95,7 +98,7 @@ class Pose:
         return
 
     def get_torso_polygon(self):
-        keypoints = self.keypoints.cpu().numpy()
+        keypoints = self.keypoints.numpy()
         x, y, w, h = self.bbox
 
         left_shoulder = Pose.get_fallback_keypoint(
