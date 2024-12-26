@@ -1,5 +1,5 @@
 import os
-
+from tqdm import tqdm
 import torch
 import cv2
 
@@ -22,7 +22,7 @@ DIR_RAW = "D:/Documents/devs/fight_motion/data/raw"
 DIR_INT = "D:/Documents/devs/fight_motion/data/interim"
 
 
-def show_frame_with_buttons(frame, fighters):
+def show_frame_with_buttons(frame):
     # Create a Tkinter window
     root = tk.Tk()
     root.title("Frame Review")
@@ -62,7 +62,10 @@ def show_frame_with_buttons(frame, fighters):
     return accept
 
 
-def first_frame_with_two_fighters(cap):
+def first_frame_with_two_fighters(video_name):
+    video_path = os.path.join(DIR_RAW, video_name)
+    # Open video
+    cap = cv2.VideoCapture(video_path)
     # Iterate through frames
     frame_idx = 0
     while True:
@@ -117,59 +120,23 @@ def first_frame_with_two_fighters(cap):
             if accepted:
                 return frame_idx, fighters
         frame_idx += 1
-
-
-def export_first_frame(frame_idx, fighters, cap, video_name):
-    if frame_idx is not None and len(fighters) == 2:
-        subfolder = os.path.join(DIR_INT, video_name)
-        os.makedirs(subfolder, exist_ok=True)
-
-        # Write fighter_1.txt and fighter_2.txt
-        fighter_1_box = fighters[0]
-        fighter_2_box = fighters[1]
-
-        with open(os.path.join(subfolder, "fighter_1.txt"), "w") as f1:
-            f1.write(
-                f"{fighter_1_box[0]}, {fighter_1_box[1]}, {fighter_1_box[2]}, {fighter_1_box[3]}"
-            )
-
-        with open(os.path.join(subfolder, "fighter_2.txt"), "w") as f2:
-            f2.write(
-                f"{fighter_2_box[0]}, {fighter_2_box[1]}, {fighter_2_box[2]}, {fighter_2_box[3]}"
-            )
-
-        # Trim the video to start at frame_idx and remove audio
-        cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
-
-        fps = cap.get(cv2.CAP_PROP_FPS)
-        width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-
-        trimmed_video_path = os.path.join(subfolder, f"{video_name}_trimmed.mp4")
-        out = cv2.VideoWriter(trimmed_video_path, fourcc, fps, (width, height))
-
-        while True:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            out.write(frame)
-
-        out.release()
+    cap.release()
     return
 
 
+def export_first_frame(frame_idx, fighters, video_name):
+    if frame_idx is not None and len(fighters) == 2:
+        # Write a single text file with the first frame index and both fighters' bounding boxes
+        with open(os.path.join(DIR_INT, video_name.replace(".mp4", ".txt")), "w") as f:
+            f.write(
+                f"{frame_idx}/{fighters[0].cpu().numpy()}/{fighters[1].cpu().numpy()}"
+            )
+
+
 def main():
-    for video_name in os.listdir(DIR_RAW):
+    for video_name in tqdm(os.listdir(DIR_RAW)[:1]):
         if video_name.endswith(".mp4"):
-            video_path = os.path.join(DIR_RAW, video_name)
-            # Open video
-            cap = cv2.VideoCapture(video_path)
-
-            frame_idx, fighters = first_frame_with_two_fighters(cap)
-            export_first_frame(frame_idx, fighters, cap, video_name)
-
-    cap.release()
+            first_frame_with_two_fighters(video_name)
     return
 
 
