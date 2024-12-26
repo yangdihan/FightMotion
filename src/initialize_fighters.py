@@ -108,6 +108,7 @@ def first_frame_with_two_fighters(video_name):
             )
 
             # Plot the frame with the two fighters' bbox overlaid
+            bbox_xyxy = []
             for box in fighters:
                 x, y, w, h = box
                 x1 = int(x - w / 2)
@@ -115,26 +116,23 @@ def first_frame_with_two_fighters(video_name):
                 y1 = int(y - h / 2)
                 y2 = int(y + h / 2)
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                bbox_xyxy.append((x1, y1, x2, y2))
 
-            accepted = show_frame_with_buttons(frame, fighters)
+            accepted = show_frame_with_buttons(frame)
             if accepted:
-                return frame_idx, fighters
+                with open(
+                    os.path.join(DIR_INT, video_name.replace(".mp4", ".txt")), "w"
+                ) as f:
+                    f.write(f"{frame_idx}\n{bbox_xyxy}")
+                    break
         frame_idx += 1
+
     cap.release()
     return
 
 
-def export_first_frame(frame_idx, fighters, video_name):
-    if frame_idx is not None and len(fighters) == 2:
-        # Write a single text file with the first frame index and both fighters' bounding boxes
-        with open(os.path.join(DIR_INT, video_name.replace(".mp4", ".txt")), "w") as f:
-            f.write(
-                f"{frame_idx}/{fighters[0].cpu().numpy()}/{fighters[1].cpu().numpy()}"
-            )
-
-
 def main():
-    for video_name in tqdm(os.listdir(DIR_RAW)[:1]):
+    for video_name in tqdm(os.listdir(DIR_RAW)):
         if video_name.endswith(".mp4"):
             first_frame_with_two_fighters(video_name)
     return
