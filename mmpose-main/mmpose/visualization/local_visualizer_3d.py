@@ -121,8 +121,11 @@ class Pose3dLocalVisualizer(PoseLocalVisualizer):
         vis_width = max(image.shape)
         vis_height = vis_width
 
+        # print("pose_samples", pose_samples)
+
         if 'pred_instances' in pose_samples:
             pred_instances = pose_samples.pred_instances
+            # print("hit 1", pred_instances)
         else:
             pred_instances = InstanceData()
         if num_instances < 0:
@@ -131,6 +134,7 @@ class Pose3dLocalVisualizer(PoseLocalVisualizer):
             else:
                 num_instances = 0
         else:
+            # print("hit 2")
             if len(pred_instances) > num_instances:
                 pred_instances_ = InstanceData()
                 for k in pred_instances.keys():
@@ -141,6 +145,7 @@ class Pose3dLocalVisualizer(PoseLocalVisualizer):
                 num_instances = len(pred_instances)
 
         num_fig = num_instances
+        # print("num_fig", num_fig)
         if draw_gt:
             vis_width *= 2
             num_fig *= 2
@@ -296,18 +301,18 @@ class Pose3dLocalVisualizer(PoseLocalVisualizer):
 
         # Convert figure to numpy array with ARGB
         pred_img_data = np.frombuffer(fig.canvas.tostring_argb(), dtype=np.uint8)
-        pred_img_data = pred_img_data.reshape((vis_height, vis_width, 4))  # Adjust dimensions accordingly
+        pred_img_data = pred_img_data.reshape((vis_height, vis_width* num_instances, 4))  # Adjust dimensions accordingly
 
         # If you don't need the alpha channel, remove it
         pred_img_data = pred_img_data[:, :, 1:]  # This removes the alpha channel
 
         if not pred_img_data.any():
-            pred_img_data = np.full((vis_height, vis_width, 3), 255)
+            pred_img_data = np.full((vis_height, vis_width* num_instances, 3), 255)
         else:
             width, height = fig.get_size_inches() * fig.get_dpi()
             pred_img_data = pred_img_data.reshape(
                 int(height),
-                int(width) * num_instances, 3)
+                int(width), 3)
 
         plt.close(fig)
 
@@ -527,6 +532,15 @@ class Pose3dLocalVisualizer(PoseLocalVisualizer):
         the images will be displayed in a local window.
         - If ``out_file`` is specified, the drawn image will be
         saved to ``out_file``. t is usually used when the display
+        is not available.s.
+
+        - If GT and prediction are plotted at the same time, they are
+        displayed in a stitched image where the left image is the
+        ground truth and the right image is the prediction.
+        - If ``show`` is True, all storage backends are ignored, and
+        the images will be displayed in a local window.
+        - If ``out_file`` is specified, the drawn image will be
+        saved to ``out_file``. t is usually used when the display
         is not available.
 
         Args:
@@ -566,16 +580,7 @@ class Pose3dLocalVisualizer(PoseLocalVisualizer):
             num_instances (int): Number of instances to be shown in 3D. If
                 smaller than 0, all the instances in the pose_result will be
                 shown. Otherwise, pad or truncate the pose_result to a length
-                of num_instances. Defaults to -1
-            show (bool): Whether to display the drawn image. Default to
-                ``False``
-            wait_time (float): The interval of show (s). Defaults to 0
-            out_file (str): Path to output file. Defaults to ``None``
-            kpt_thr (float, optional): Minimum threshold of keypoints
-                to be shown. Default: 0.3.
-            step (int): Global step value to record. Defaults to 0
         """
-
         det_img_data = None
         scores_2d = None
 
